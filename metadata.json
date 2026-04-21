@@ -1,0 +1,8 @@
+{
+  "name": "Remix: app Gestão POS",
+  "description": "Sistema completo para serviços, restaurante, varejo, mercado e construção com PDV, orçamentos, gestão de estoque e clientes. Inclui gestão de pessoal e módulos específicos por setor.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}

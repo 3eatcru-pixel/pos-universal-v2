@@ -1,0 +1,99 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ======================================================
+    // DEFAULT DENY (The Global Safety Net)
+    // ======================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ======================================================
+    // HELPER FUNCTIONS (The Eight Pillars Primitives)
+    // ======================================================
+    function isSignedIn() { return request.auth != null; }
+    
+    // ID Validation with Prefix Check
+    function isValidId(id, prefix) { 
+      return id is string 
+        && id.size() > prefix.size() + 1 
+        && id.size() <= 128 
+        && id.startsWith(prefix + '_')
+        && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // Multi-tenant Relationship Checks
+    // Check if user is the OWNER of the company
+    function isCompanyOwner(companyId) {
+      return isSignedIn() && get(/databases/$(database)/documents/enterprises/$(companyId)).data.ownerId == request.auth.uid;
+    }
+
+    // Check if user is an EMPLOYEE of the company (Slower but secure)
+    // Note: This relies on a 'users' collection or similar mapping.
+    // Implementing a mapping: /staff/usr_{uid}_cmp_{cid} or using a query.
+    // For simplicity in this POS: we check if a staff record exists for this user and company.
+    function isEmployeeOf(companyId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/staff/$(request.auth.uid + "_" + companyId));
+    }
+
+    // ======================================================
+    // COLLECTION RULES
+    // ======================================================
+
+    // Users (usr_xxx)
+    match /users/{userId} {
+      allow get: if isSignedIn() && (userId == request.auth.uid);
+      allow create: if isSignedIn() && (userId == request.auth.uid) && isValidId(userId, 'usr');
+    }
+
+    // Enterprises (cmp_xxx)
+    match /enterprises/{companyId} {
+      allow get: if isSignedIn(); // Or restricted to owner/employees
+      allow list: if isSignedIn(); 
+      allow create: if isSignedIn() && isValidId(companyId, 'cmp') && incoming().ownerId == request.auth.uid;
+      allow update: if isCompanyOwner(companyId) && incoming().ownerId == existing().ownerId;
+    }
+
+    // Shops (str_xxx)
+    match /shops/{shopId} {
+      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
+      allow create: if isSignedIn() && isValidId(shopId, 'str') && isCompanyOwner(incoming().companyId);
+      allow update: if isSignedIn() && isCompanyOwner(existing().companyId);
+    }
+
+    // Staff (emp_xxx)
+    match /staff/{staffId} {
+      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
+      allow create: if isSignedIn() && isCompanyOwner(incoming().companyId);
+      allow update: if isSignedIn() && isCompanyOwner(existing().companyId);
+    }
+
+    // Orders (ord_xxx)
+    match /orders/{orderId} {
+      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
+      allow create: if isSignedIn() && (isCompanyOwner(incoming().companyId) || isEmployeeOf(incoming().companyId));
+      allow update: if isSignedIn() && (isCompanyOwner(existing().companyId) || isEmployeeOf(existing().companyId));
+    }
+
+    // Products (pro_xxx)
+    match /products/{productId} {
+      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
+      allow create: if isSignedIn() && isCompanyOwner(incoming().companyId);
+      allow update: if isSignedIn() && isCompanyOwner(existing().companyId);
+    }
+
+    // Invites (inv_xxx)
+    match /invites/{inviteId} {
+      allow get: if isSignedIn(); // Anyone can see an invite if they have the ID (to join)
+      allow create: if isSignedIn() && isCompanyOwner(incoming().companyId);
+      allow update: if isSignedIn() && (
+        isCompanyOwner(existing().companyId) || 
+        (incoming().used == true && incoming().usedBy == request.auth.uid)
+      );
+    }
+  }
+}

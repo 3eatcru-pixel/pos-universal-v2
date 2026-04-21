@@ -1,0 +1,104 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ======================================================
+    // DEFAULT DENY (The Global Safety Net)
+    // ======================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ======================================================
+    // HELPER FUNCTIONS (The Eight Pillars Primitives)
+    // ======================================================
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { return isSignedIn() && request.auth.token.email == "novaapp26@gmail.com"; }
+    function isValidId(id) { return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    // Simple Schema Checks (Size Enforcements)
+    function isSizedString(val, max) { return val is string && val.size() <= max; }
+    function isSizedList(val, max) { return val is list && val.size() <= max; }
+
+    // ======================================================
+    // COLLECTION RULES
+    // ======================================================
+
+    // Master Keys: Used for system activation. 
+    match /masterKeys/{keyId} {
+      allow get: if isValidId(keyId);
+      allow list: if isAdmin();
+      allow create: if true; // Temporary for setup
+      allow update: if isValidId(keyId) && incoming().diff(existing()).affectedKeys().hasOnly(['used', 'usedBy', 'enterpriseId']);
+    }
+
+    match /enterprises/{entId} {
+      allow read, write: if isValidId(entId);
+    }
+
+    match /rolePermissions/{role} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /shops/{shopId} {
+      allow read, write: if isValidId(shopId);
+    }
+
+    match /staff/{staffId} {
+      allow read, write: if isValidId(staffId);
+    }
+
+    match /products/{productId} {
+      allow read, write: if isValidId(productId);
+    }
+
+    match /orders/{orderId} {
+      allow read: if isValidId(orderId);
+      allow create: if isValidId(orderId) && incoming().enterpriseId is string;
+      allow update: if isValidId(orderId);
+    }
+
+    match /tables/{tableId} {
+      allow read, write: if isValidId(tableId);
+    }
+
+    match /inventory/{itemId} {
+      allow read, write: if isValidId(itemId);
+    }
+
+    match /backups/{backupId} {
+      allow read, write: if isValidId(backupId);
+    }
+
+    match /settings/{settingId} {
+      allow read, write: if isValidId(settingId);
+    }
+
+    match /shifts/{shiftId} {
+      allow read, write: if isValidId(shiftId);
+    }
+
+    match /reservations/{resId} {
+      allow read, write: if isValidId(resId);
+    }
+
+    match /printers/{printerId} {
+      allow read, write: if isValidId(printerId);
+    }
+
+    match /incidentReports/{reportId} {
+      allow read, write: if isValidId(reportId);
+    }
+
+    match /notifications/{notifId} {
+      allow read, write: if isValidId(notifId);
+    }
+
+    match /recountRequests/{reqId} {
+      allow read, write: if isValidId(reqId);
+    }
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "entities": {
+    "User": {
+      "title": "Account Identity",
+      "description": "Global user identity (usr_xxx). Linked to one or more staff roles.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "email", "name", "createdAt"]
+    },
+    "InviteCode": {
+      "title": "Invite Code",
+      "description": "Secure invite for joining a company (inv_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "companyId": { "type": "string" },
+        "storeId": { "type": "string" },
+        "role": { "type": "string" },
+        "expiresAt": { "type": "number" },
+        "used": { "type": "boolean" },
+        "usedBy": { "type": "string" }
+      },
+      "required": ["id", "code", "companyId", "storeId", "role", "expiresAt", "used"]
+    },
+    "Enterprise": {
+      "title": "Company",
+      "description": "Main organization details (cmp_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "name", "ownerId"]
+    },
+    "Shop": {
+      "title": "Store/Branch",
+      "description": "Branch of a company (str_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "companyId": { "type": "string" },
+        "regionId": { "type": "string" },
+        "address": { "type": "string" },
+        "cnpj": { "type": "string" }
+      },
+      "required": ["id", "name", "companyId"]
+    },
+    "Staff": {
+      "title": "Employee",
+      "description": "Relationship between a user and a company/store (emp_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "storeId": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "active": { "type": "boolean" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "companyId", "name", "role", "active"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Inventory or menu item (pro_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "storeId": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "companyId", "storeId", "name", "price", "category", "active"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "POS transaction (ord_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "storeId": { "type": "string" },
+        "tableId": { "type": "string" },
+        "items": { "type": "array" },
+        "status": { "type": "string" },
+        "total": { "type": "number" }
+      },
+      "required": ["id", "companyId", "storeId", "tableId", "status", "total"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "Global identities." },
+    "/invites/{inviteId}": { "schema": "InviteCode", "description": "Company invites." },
+    "/enterprises/{entId}": { "schema": "Enterprise", "description": "Organization data." },
+    "/shops/{shopId}": { "schema": "Shop", "description": "Stores." },
+    "/staff/{staffId}": { "schema": "Staff", "description": "Employee profiles." },
+    "/products/{productId}": { "schema": "Product", "description": "Inventory products." },
+    "/orders/{orderId}": { "schema": "Order", "description": "Sales records." }
+  }
+}
