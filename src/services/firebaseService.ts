@@ -145,37 +145,6 @@ function normalizeRolePermissionDocId(id: string, data?: any): string {
 }
 
 export const firebaseService = {
-  // ... existing methods ...
-  saveSecureBackup: async (enterpriseId: string, data: any, key: string) => {
-    const chunks = dataPipeline.pack(data, key);
-    const backupId = `backup-${Date.now()}`;
-    try {
-      await setDoc(doc(db, 'backups', backupId), {
-        companyId: enterpriseId,
-        enterpriseId,
-        timestamp: Date.now(),
-        chunks,
-        chunkCount: chunks.length,
-        method: 'AES-256 + LZ-String'
-      });
-      return backupId;
-    } catch (e) {
-      return handleFirestoreError(e, 'create', `backups/${backupId}`);
-    }
-  },
-
-  getSecureBackup: async (backupId: string, key: string) => {
-    try {
-      const docSnap = await getDoc(doc(db, 'backups', backupId));
-      if (docSnap.exists()) {
-        const { chunks } = docSnap.data();
-        return dataPipeline.unpack(chunks, key);
-      }
-      throw new Error('Backup not found');
-    } catch (e) {
-      return handleFirestoreError(e, 'get', `backups/${backupId}`);
-    }
-  },
   // Generic collection listener scoped by enterprise and optionally shop
   subscribeCollection: (colName: string, enterpriseId: string | null, shopId: string | null, callback: (data: any[]) => void) => {
     if (TENANT_SCOPED_COLLECTIONS.has(colName) && !enterpriseId) {
@@ -206,17 +175,57 @@ export const firebaseService = {
     });
   },
 
-  // Staff (Scoped per enterprise)
-  subscribeStaff: (enterpriseId: string | null, callback: (data: Staff[]) => void) => {
-    let q = query(collection(db, 'staff'));
-    if (enterpriseId) {
-      q = query(collection(db, 'staff'), where('enterpriseId', '==', enterpriseId));
-    }
+  subscribeStaff: (enterpriseId: string, callback: (data: Staff[]) => void) => {
+    const q = query(collection(db, 'staff'), where('enterpriseId', '==', enterpriseId));
     return onSnapshot(q, (snapshot) => {
-      callback(snapshot.docs.map(d => ({ ...d.data(), id: d.id }) as Staff));
+      const docs = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as Staff[];
+      callback(docs);
     }, (error) => {
       handleFirestoreError(error, 'list', 'staff');
     });
+  },
+
+  updateTableStatus: async (tableId: string, status: string, orderId: string | null = null) => {
+    try {
+      await updateDoc(doc(db, 'tables', tableId), { 
+        status, 
+        currentOrderId: orderId,
+        updatedAt: Date.now() 
+      });
+    } catch (e) {
+      handleFirestoreError(e, 'update', `tables/${tableId}`);
+    }
+  },
+
+  saveSecureBackup: async (enterpriseId: string, data: any, key: string) => {
+    const chunks = dataPipeline.pack(data, key);
+    const backupId = `backup-${Date.now()}`;
+    try {
+      await setDoc(doc(db, 'backups', backupId), {
+        companyId: enterpriseId,
+        enterpriseId,
+        timestamp: Date.now(),
+        chunks,
+        chunkCount: chunks.length,
+        method: 'AES-256 + LZ-String'
+      });
+      return backupId;
+    } catch (e) {
+      return handleFirestoreError(e, 'create', `backups/${backupId}`);
+    }
+  },
+
+  getSecureBackup: async (backupId: string, key: string) => {
+    try {
+      const docSnap = await getDoc(doc(db, 'backups', backupId));
+      if (docSnap.exists()) {
+        const { chunks } = docSnap.data();
+        return dataPipeline.unpack(chunks, key);
+      }
+      throw new Error('Backup not found');
+    } catch (e) {
+      return handleFirestoreError(e, 'get', `backups/${backupId}`);
+    }
   },
 
   // Save/Update Helpers
@@ -290,10 +299,6 @@ export const firebaseService = {
         q = query(collection(db, colName), where('enterpriseId', '==', enterpriseId));
       }
       const snapshot = await getDocs(q);
-      if (enterpriseId && snapshot.docs.length === 0) {
-        const fallback = await getDocs(query(collection(db, colName), where('companyId', '==', enterpriseId)));
-        return fallback.docs.map(d => ({ ...d.data(), id: d.id }));
-      }
       return snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
     } catch (e) {
       return handleFirestoreError(e, 'list', colName);
@@ -513,12 +518,6 @@ export const firebaseService = {
     }
   },
 
-  // Specific Actions
-  placeOrder: async (order: Order) => {
-    const { id, ...data } = order;
-    await setDoc(doc(db, 'orders', id), withTenantMetadata('orders', data));
-  },
-
   consumeMasterKey: async (rawKey: string, context: { usedBy: string; enterpriseId: string; deviceId?: string }) => {
     const normalizedKey = rawKey.trim().toUpperCase();
     if (!normalizedKey) {
@@ -564,22 +563,6 @@ export const firebaseService = {
       const reason = typeof error?.message === 'string' ? error.message : 'consume_failed';
       return { ok: false, reason: reason as 'invalid_key' | 'already_used' | 'expired_key' | 'revoked_key' | 'consume_failed' };
     }
-  },
-
-  closeOrder: async (orderId: string, payments: any[], paymentMethod: string) => {
-    await updateDoc(doc(db, 'orders', orderId), {
-      status: 'delivered',
-      closedAt: Date.now(),
-      payments,
-      paymentMethod
-    });
-  },
-
-  updateTableStatus: async (tableId: string, status: string, orderId?: string) => {
-    const data: any = { status };
-    if (orderId) data.currentOrderId = orderId;
-    else data.currentOrderId = null;
-    await updateDoc(doc(db, 'tables', tableId), data);
   },
 
   seedData: async (data: {

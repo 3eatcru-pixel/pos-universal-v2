@@ -14,7 +14,7 @@ import {
   Leaf,
   Scale
 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
 
 export const MarketDashboard: React.FC = () => {

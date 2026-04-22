@@ -17,9 +17,9 @@ import {
   List,
   X
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
-import { retailService } from '../services/retailService';
+import { paymentService } from '../../../services/paymentService';
 
 interface CartItem {
   id: string;
@@ -28,8 +28,6 @@ interface CartItem {
   quantity: number;
   variation?: string;
 }
-
-type PaymentMethod = 'card' | 'cash' | 'pix';
 
 export const RetailPOS: React.FC = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -59,38 +57,6 @@ export const RetailPOS: React.FC = () => {
 
   const removeFromCart = (id: string) => {
     setCart(cart.filter(i => i.id !== id));
-  };
-
-  const finalizePayment = async (paymentMethod: PaymentMethod) => {
-    if (cart.length === 0) {
-      alert('Carrinho vazio!');
-      return;
-    }
-
-    const saleData = {
-      id: `sale_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      items: cart.map((item) => ({
-        productId: item.id,
-        name: item.name,
-        quantity: item.quantity,
-        unitPrice: item.price,
-        totalPrice: item.price * item.quantity,
-      })),
-      subtotal,
-      tax,
-      total,
-      paymentMethod,
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      await retailService.processSale(saleData);
-      alert(`Pagamento ${paymentMethod.toUpperCase()} de ${formatCurrency(total)} registrado com sucesso!`);
-      setCart([]);
-    } catch (error) {
-      console.error('[RETAIL_POS] Erro ao processar venda', error);
-      alert('Falha ao registrar venda. Tente novamente.');
-    }
   };
 
   return (
@@ -253,19 +219,34 @@ export const RetailPOS: React.FC = () => {
 
          <div className="grid grid-cols-3 gap-4">
             <button 
-              onClick={() => finalizePayment('card')}
+              onClick={async () => {
+                if(cart.length === 0) return alert('Carrinho vazio!');
+                await paymentService.processPayment({ amount: total, method: 'card', module: 'retail' });
+                alert(`Pagamento Cartão de ${formatCurrency(total)} registrado com sucesso!`);
+                setCart([]);
+              }}
               className="p-6 bg-indigo-100 text-indigo-600 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-indigo-600 hover:text-white transition-all shadow-sm group">
                <CreditCard className="w-6 h-6 group-hover:scale-110 transition-transform" />
                <span className="text-[9px] font-black uppercase tracking-widest">Cartão</span>
             </button>
             <button 
-              onClick={() => finalizePayment('cash')}
+              onClick={async () => {
+                if(cart.length === 0) return alert('Carrinho vazio!');
+                await paymentService.processPayment({ amount: total, method: 'cash', module: 'retail' });
+                alert(`Pagamento Dinheiro de ${formatCurrency(total)} registrado com sucesso!`);
+                setCart([]);
+              }}
               className="p-6 bg-emerald-100 text-emerald-600 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-emerald-600 hover:text-white transition-all shadow-sm group">
                <Banknote className="w-6 h-6 group-hover:scale-110 transition-transform" />
                <span className="text-[9px] font-black uppercase tracking-widest">Dinheiro</span>
             </button>
             <button 
-              onClick={() => finalizePayment('pix')}
+              onClick={async () => {
+                if(cart.length === 0) return alert('Carrinho vazio!');
+                await paymentService.processPayment({ amount: total, method: 'pix', module: 'retail' });
+                alert(`Pagamento PIX de ${formatCurrency(total)} registrado com sucesso!`);
+                setCart([]);
+              }}
               className="p-6 bg-slate-900 text-white rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-indigo-600 transition-all shadow-xl group">
                <Zap className="w-6 h-6 animate-pulse group-hover:scale-110" />
                <span className="text-[9px] font-black uppercase tracking-widest">PIX</span>

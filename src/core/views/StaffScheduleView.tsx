@@ -13,7 +13,7 @@ import {
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   format, 
   startOfWeek, 
@@ -25,11 +25,10 @@ import {
   isWithinInterval
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Shift, Staff, RolePermissions } from '../../types';
+import { Shift, Staff, UserRole } from '../../types';
 import { firebaseService } from '../../services/firebaseService';
 import { accountService } from '../services/accountService';
 import { cn } from '../../lib/utils';
-import { MOCK_PERMISSIONS } from '../../mockData';
 
 interface StaffScheduleViewProps {
   module: 'restaurant' | 'market' | 'construction' | 'retail';
@@ -80,19 +79,13 @@ const moduleConfigs: Record<string, { title: string; areas: { id: string; label:
 export const StaffScheduleView: React.FC<StaffScheduleViewProps> = ({ module }) => {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [roles, setRoles] = useState<RolePermissions[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   const [loading, setLoading] = useState(true);
 
   const currentUser = accountService.getCurrentUser();
-  const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
-  const currentRolePermissions =
-    roles.find(r => r.role === currentUser?.role) ||
-    MOCK_PERMISSIONS.find(r => r.role === currentUser?.role) ||
-    null;
-  const canManageSchedule = currentUser?.role === 'dev' || !!currentRolePermissions?.actions.canManageSchedule;
+  const companyId = currentUser?.companyId || 'default';
   const config = moduleConfigs[module] || moduleConfigs.restaurant;
 
   useEffect(() => {
@@ -110,8 +103,6 @@ export const StaffScheduleView: React.FC<StaffScheduleViewProps> = ({ module }) 
       // For now we assume shifts collection has all shifts and we might filter by area if they overlap
       setShifts(shiftsData as Shift[]);
       setStaff(staffData as Staff[]);
-      const roleData = await firebaseService.getAllDocs('rolePermissions', companyId);
-      setRoles(roleData as unknown as RolePermissions[]);
     } catch (error) {
       console.error('Error loading schedule data:', error);
     } finally {
@@ -131,10 +122,6 @@ export const StaffScheduleView: React.FC<StaffScheduleViewProps> = ({ module }) 
 
   const handleSaveShift = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!canManageSchedule) {
-      alert('Sem permissão para gerenciar escalas.');
-      return;
-    }
     const formData = new FormData(e.currentTarget);
     const dateStr = formData.get('date') as string;
     const startTimeStr = formData.get('startTime') as string;
@@ -168,10 +155,6 @@ export const StaffScheduleView: React.FC<StaffScheduleViewProps> = ({ module }) 
   };
 
   const handleDeleteShift = async (id: string) => {
-    if (!canManageSchedule) {
-      alert('Sem permissão para remover turnos.');
-      return;
-    }
     if (confirm('Deseja remover este turno?')) {
       try {
         await firebaseService.deleteItem('shifts', id);

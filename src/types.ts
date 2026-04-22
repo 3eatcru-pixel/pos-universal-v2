@@ -4,6 +4,7 @@
  */
 
 export type SystemMode = 'restaurant' | 'distributor' | 'service';
+export type BusinessMode = 'restaurant' | 'construction' | 'retail' | 'market' | 'generic' | 'service';
 
 export type TableStatus = 'free' | 'occupied' | 'reserved' | 'closed';
 
@@ -88,12 +89,25 @@ export interface InviteCode {
   usedBy?: string; // usr_xxx
 }
 
+export type Company = Enterprise;
+
 export interface Enterprise {
   id: string; // cmp_xxx
   name: string;
-  ownerId?: string; // usr_xxx
-  owners?: string[]; // legacy compatibility
+  ownerId: string; // usr_xxx
+  businessType: BusinessMode;
+  ownerEmail: string;
+  ownerPhone?: string;
+  ownerName?: string;
+  accessCode: string;
+  status: 'active' | 'inactive' | 'maintenance';
+  isPaused?: boolean;
+  createdAt: number;
+  lockedModules?: string[];
+  enabledModules?: string[];
+  lastDevAccess?: number;
   regions: Region[];
+  owners?: string[];
 }
 
 export interface Region {
@@ -107,8 +121,8 @@ export interface Region {
 export interface Shop {
   id: string; // str_xxx
   name: string;
-  companyId?: string; // canonical (new)
-  enterpriseId?: string; // legacy compatibility
+  enterpriseId: string;
+  companyId?: string; // Kept for compat
   regionId: string;
   address?: string;
   cnpj?: string;
@@ -144,7 +158,7 @@ export interface Printer {
   type: PrinterType;
   ipAddress?: string; // For network printers
   port?: number;
-  connectionType: 'network' | 'usb' | 'bluetooth' | 'system_default';
+  connectionType: 'network' | 'usb' | 'system_default';
   status: 'online' | 'offline' | 'error';
   isDefault: boolean;
 }
@@ -267,10 +281,9 @@ export type OrderStatus = 'pending' | 'preparing' | 'ready' | 'delivered' | 'can
 
 export interface Staff {
   id: string; // emp_xxx
-  companyId?: string; // canonical (new)
-  enterpriseId?: string; // legacy compatibility
-  storeId?: string; // canonical (new)
-  shopId?: string; // legacy compatibility
+  enterpriseId: string;
+  companyId?: string; // Kept for compat
+  storeId?: string; // Optional if not assigned to specific store
   name: string;
   role: UserRole;
   active: boolean;
@@ -347,9 +360,12 @@ export interface Transaction {
   description: string;
   timestamp: number;
   status: 'pending' | 'completed' | 'cancelled';
-  paymentMethod?: string;
-  referenceId?: string;
-  module?: string;
+  paymentMethod: 'cash' | 'card' | 'pix' | 'other';
+  referenceId?: string; // Order ID
+  module: 'restaurant' | 'market' | 'retail' | 'construction' | 'service';
+  staffId: string;
+  staffName: string;
+  change?: number; // Change given if cash
 }
 
 export interface Supplier {
@@ -478,10 +494,4 @@ export interface MasterKey {
   used: boolean;
   usedBy?: string; // ownerId
   enterpriseId?: string;
-  companyId?: string;
-  expiresAt?: number;
-  usedAt?: number;
-  updatedAt?: number;
-  revokedAt?: number;
-  usedByDevice?: string | null;
 }

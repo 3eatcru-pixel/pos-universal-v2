@@ -24,11 +24,12 @@ import {
   Smartphone,
   Package
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { BarcodeScanner } from '../components/BarcodeScanner';
 import { Product, Transaction } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';
+import { paymentService } from '../../../services/paymentService';
 import { accountService } from '../../../core/services/accountService';
 
 interface POSItem extends Product {
@@ -47,11 +48,6 @@ export const MarketPOS: React.FC = () => {
   const [processingSale, setProcessingSale] = useState(false);
   const [saleSuccess, setSaleSuccess] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const enterpriseId =
-    accountService.getCurrentCompanyId() ||
-    localStorage.getItem('rm_enterprise_id') ||
-    'local-ent';
-  const shopId = localStorage.getItem('rm_selected_shop_id') || 'shop-1';
 
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   const total = subtotal; 
@@ -61,17 +57,17 @@ export const MarketPOS: React.FC = () => {
 
   useEffect(() => {
     loadProducts();
-  }, [enterpriseId]);
+  }, []);
 
   const loadProducts = async () => {
     try {
-      const data = await firebaseService.getAllDocs('products', enterpriseId);
+      const data = await firebaseService.getAllDocs('products');
       if (data.length === 0) {
         const defaults: Product[] = [
-          { id: `${enterpriseId}-p1`, name: 'Leite Integral 1L', price: 5.50, unit: 'un', barcode: '789123', active: true, category: 'Laticinios', enterpriseId, shopId, stock: 100 },
-          { id: `${enterpriseId}-p2`, name: 'Pao de Forma', price: 8.90, unit: 'un', barcode: '789456', active: true, category: 'Padaria', enterpriseId, shopId, stock: 50 },
-          { id: `${enterpriseId}-p3`, name: 'Alcatra (kg)', price: 45.90, unit: 'kg', barcode: '789789', active: true, category: 'Acougue', enterpriseId, shopId, stock: 20 },
-          { id: `${enterpriseId}-p4`, name: 'Maca Fuji (Kg)', price: 9.90, unit: 'kg', barcode: '789000', active: true, category: 'Hortifruti', enterpriseId, shopId, stock: 35 },
+          { id: 'p1', name: 'Leite Integral 1L', price: 5.50, unit: 'un', barcode: '789123', active: true, category: 'Laticínios', enterpriseId: 'default', shopId: 'default', stock: 100 },
+          { id: 'p2', name: 'Pão de Forma', price: 8.90, unit: 'un', barcode: '789456', active: true, category: 'Padaria', enterpriseId: 'default', shopId: 'default', stock: 50 },
+          { id: 'p3', name: 'Alcatra (kg)', price: 45.90, unit: 'kg', barcode: '789789', active: true, category: 'Açougue', enterpriseId: 'default', shopId: 'default', stock: 20 },
+          { id: 'p4', name: 'Maçã Fuji (Kg)', price: 9.90, unit: 'kg', barcode: '789000', active: true, category: 'Hortifruti', enterpriseId: 'default', shopId: 'default', stock: 35 },
         ];
         setProducts(defaults);
       } else {
@@ -131,24 +127,21 @@ export const MarketPOS: React.FC = () => {
 
     setProcessingSale(true);
     try {
-      await firebaseService.decrementProductStocksAtomic(
-        cart
-          .filter(item => item.stock !== undefined)
-          .map(item => ({ productId: item.id, quantity: item.quantity })),
-        { enterpriseId, minStock: 0 }
-      );
-
-      const transaction: Omit<Transaction, 'id'> = {
-        type: 'income',
+      // NEW: Use centralized PaymentService for Receipts, History and Cash Register
+      await paymentService.processPayment({
         amount: total,
-        category: 'Venda Mercado',
-        description: `Venda de ${cart.length} itens`,
-        timestamp: Date.now(),
-        status: 'completed',
-        enterpriseId,
-        shopId
-      };
-      await firebaseService.addItem('transactions', transaction);
+        method: paymentMethod as any,
+        module: 'market',
+        shopId: 'default', // Ideally get from context
+        change: amountReceivedNum > total ? amountReceivedNum - total : 0
+      });
+
+      for (const item of cart) {
+        if (item.stock !== undefined) {
+          const newStock = item.stock - item.quantity;
+          await firebaseService.saveItem('products', item.id, { ...item, stock: newStock });
+        }
+      }
 
       setSaleSuccess(true);
       setTimeout(() => {
@@ -161,12 +154,7 @@ export const MarketPOS: React.FC = () => {
 
     } catch (err) {
       console.error('Error finalizing sale:', err);
-      const msg = String((err as any)?.message || '');
-      if (msg.includes('insufficient_stock')) {
-        alert('Estoque insuficiente para concluir a venda. Atualize o carrinho e tente novamente.');
-      } else {
-        alert('Erro ao processar venda');
-      }
+      alert('Erro ao processar venda');
     } finally {
       setProcessingSale(false);
     }
@@ -587,5 +575,3 @@ export const MarketPOS: React.FC = () => {
     </div>
   );
 };
-
-

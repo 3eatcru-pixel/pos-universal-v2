@@ -21,12 +21,11 @@ import {
   Monitor,
   Scale as ScaleIcon
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { BarcodeScanner } from '../components/BarcodeScanner';
 import { Product } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';
-import { accountService } from '../../../core/services/accountService';
 
 export const MarketInventory: React.FC = () => {
   const [filter, setFilter] = useState('all');
@@ -40,11 +39,6 @@ export const MarketInventory: React.FC = () => {
   const [scannedBarcode, setScannedBarcode] = useState('');
   const [countQuantity, setCountQuantity] = useState<string>('');
   const [adjustType, setAdjustType] = useState<'add' | 'set'>('set');
-  const companyId =
-    accountService.getCurrentCompanyId() ||
-    localStorage.getItem('rm_enterprise_id') ||
-    'local-ent';
-  const shopId = localStorage.getItem('rm_selected_shop_id') || 'shop-1';
   
   const [newProduct, setNewProduct] = useState<Partial<Product>>({
     name: '',
@@ -54,17 +48,17 @@ export const MarketInventory: React.FC = () => {
     unit: 'un',
     barcode: '',
     active: true,
-    enterpriseId: companyId,
-    shopId
+    enterpriseId: 'default',
+    shopId: 'default'
   });
 
   useEffect(() => {
     loadProducts();
-  }, [companyId]);
+  }, []);
 
   const loadProducts = async () => {
     try {
-      const data = await firebaseService.getAllDocs('products', companyId);
+      const data = await firebaseService.getAllDocs('products');
       setProducts(data as Product[]);
     } catch (err) {
       console.error('Error loading inventory:', err);
@@ -93,12 +87,10 @@ export const MarketInventory: React.FC = () => {
     const qty = parseFloat(countQuantity);
     if (isNaN(qty)) return;
 
+    const newStock = adjustType === 'set' ? qty : (scannedProduct.stock || 0) + qty;
+
     try {
-      if (adjustType === 'set') {
-        await firebaseService.saveItem('products', scannedProduct.id, { ...scannedProduct, stock: qty });
-      } else {
-        await firebaseService.adjustProductStockAtomic(scannedProduct.id, qty, { enterpriseId: companyId, minStock: 0 });
-      }
+      await firebaseService.saveItem('products', scannedProduct.id, { ...scannedProduct, stock: newStock });
       setShowCountModal(false);
       setScannedProduct(null);
       loadProducts();
@@ -124,8 +116,8 @@ export const MarketInventory: React.FC = () => {
         unit: 'un',
         barcode: '',
         active: true,
-        enterpriseId: companyId,
-        shopId
+        enterpriseId: 'default',
+        shopId: 'default'
       });
       loadProducts();
     } catch (err) {

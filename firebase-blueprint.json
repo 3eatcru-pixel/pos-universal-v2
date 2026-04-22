@@ -35,9 +35,10 @@
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "ownerId": { "type": "string" }
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "number" }
       },
-      "required": ["id", "name", "ownerId"]
+      "required": ["id", "name", "ownerId", "createdAt"]
     },
     "Shop": {
       "title": "Store/Branch",
@@ -46,12 +47,13 @@
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
+        "enterpriseId": { "type": "string" },
         "companyId": { "type": "string" },
         "regionId": { "type": "string" },
         "address": { "type": "string" },
         "cnpj": { "type": "string" }
       },
-      "required": ["id", "name", "companyId"]
+      "required": ["id", "name", "enterpriseId"]
     },
     "Staff": {
       "title": "Employee",
@@ -59,14 +61,15 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "enterpriseId": { "type": "string" },
         "companyId": { "type": "string" },
-        "storeId": { "type": "string" },
         "name": { "type": "string" },
         "role": { "type": "string" },
         "active": { "type": "boolean" },
-        "userId": { "type": "string" }
+        "pin": { "type": "string" },
+        "assignedShopIds": { "type": "array" }
       },
-      "required": ["id", "companyId", "name", "role", "active"]
+      "required": ["id", "enterpriseId", "name", "role", "active"]
     },
     "Product": {
       "title": "Product",
@@ -74,14 +77,14 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "companyId": { "type": "string" },
-        "storeId": { "type": "string" },
+        "enterpriseId": { "type": "string" },
+        "shopId": { "type": "string" },
         "name": { "type": "string" },
         "price": { "type": "number" },
         "category": { "type": "string" },
         "active": { "type": "boolean" }
       },
-      "required": ["id", "companyId", "storeId", "name", "price", "category", "active"]
+      "required": ["id", "enterpriseId", "shopId", "name", "price", "category", "active"]
     },
     "Order": {
       "title": "Order",
@@ -89,14 +92,48 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "companyId": { "type": "string" },
-        "storeId": { "type": "string" },
+        "enterpriseId": { "type": "string" },
+        "shopId": { "type": "string" },
         "tableId": { "type": "string" },
         "items": { "type": "array" },
         "status": { "type": "string" },
-        "total": { "type": "number" }
+        "total": { "type": "number" },
+        "startTime": { "type": "number" }
       },
-      "required": ["id", "companyId", "storeId", "tableId", "status", "total"]
+      "required": ["id", "enterpriseId", "shopId", "tableId", "status", "total", "items", "startTime"]
+    },
+    "Table": {
+      "title": "Table",
+      "description": "Dining table (tbl_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "enterpriseId": { "type": "string" },
+        "shopId": { "type": "string" },
+        "number": { "type": "number" },
+        "status": { "type": "string" },
+        "capacity": { "type": "number" }
+      },
+      "required": ["id", "enterpriseId", "shopId", "number", "status", "capacity"]
+    },
+    "Transaction": {
+      "title": "Payment Receipt",
+      "description": "Financial record of a sale (trx_xxx).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "enterpriseId": { "type": "string" },
+        "shopId": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "module": { "type": "string" },
+        "referenceId": { "type": "string" },
+        "type": { "type": "string" }
+      },
+      "required": ["id", "enterpriseId", "amount", "paymentMethod", "timestamp", "staffId", "module", "type"]
     }
   },
   "firestore": {
@@ -106,6 +143,8 @@
     "/shops/{shopId}": { "schema": "Shop", "description": "Stores." },
     "/staff/{staffId}": { "schema": "Staff", "description": "Employee profiles." },
     "/products/{productId}": { "schema": "Product", "description": "Inventory products." },
-    "/orders/{orderId}": { "schema": "Order", "description": "Sales records." }
+    "/orders/{orderId}": { "schema": "Order", "description": "Sales records." },
+    "/tables/{tableId}": { "schema": "Table", "description": "Dining tables." },
+    "/transactions/{trxId}": { "schema": "Transaction", "description": "Payment history." }
   }
 }

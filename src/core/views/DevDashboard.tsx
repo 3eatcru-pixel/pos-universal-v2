@@ -19,7 +19,7 @@ import {
   Phone,
   Briefcase
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { accountService } from '../services/accountService';
 import { formatCurrency } from '../../lib/utils';
 import { BusinessMode, Company } from '../types';
@@ -36,7 +36,8 @@ export const DevDashboard: React.FC = () => {
     ownerName: '',
     ownerEmail: '',
     ownerPhone: '',
-    type: 'generic' as BusinessMode
+    type: 'generic' as BusinessMode,
+    enabledModules: ['restaurant'] as string[]
   });
 
   const stats = [
@@ -65,10 +66,17 @@ export const DevDashboard: React.FC = () => {
 
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    await accountService.registerCompany(newComp.name, newComp.ownerEmail, newComp.type, newComp.ownerName, newComp.ownerPhone);
+    await accountService.registerCompany(
+      newComp.name, 
+      newComp.ownerEmail, 
+      newComp.type, 
+      newComp.ownerName, 
+      newComp.ownerPhone,
+      newComp.enabledModules
+    );
     setShowAddCompany(false);
     refreshData();
-    setNewComp({ name: '', ownerName: '', ownerEmail: '', ownerPhone: '', type: 'generic' });
+    setNewComp({ name: '', ownerName: '', ownerEmail: '', ownerPhone: '', type: 'generic', enabledModules: ['restaurant'] });
   };
 
   return (
@@ -164,7 +172,8 @@ export const DevDashboard: React.FC = () => {
                     <tr className="border-b border-slate-50">
                       <th className="pb-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-4">Empresa / ID</th>
                       <th className="pb-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-4">Modo / Status</th>
-                      <th className="pb-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-4">Travas de Módulo</th>
+                      <th className="pb-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-4">Módulos Habilitados</th>
+                      <th className="pb-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-4">Travas</th>
                       <th className="pb-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-4">Código acesso</th>
                       <th className="pb-6 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-4 text-right">Controles Dev</th>
                     </tr>
@@ -194,8 +203,34 @@ export const DevDashboard: React.FC = () => {
                         </td>
                         <td className="py-8 px-4">
                           <div className="flex flex-wrap gap-1.5 max-w-[200px]">
-                            {['restaurant', 'construction', 'retail', 'market'].map(mod => {
+                            {['restaurant', 'construction', 'retail', 'market', 'service'].map(mod => {
+                              const isEnabled = (c.enabledModules || []).includes(mod);
+                              return (
+                                <button
+                                  key={mod}
+                                  onClick={() => {
+                                    const current = c.enabledModules || [];
+                                    const next = isEnabled ? current.filter(m => m !== mod) : [...current, mod];
+                                    accountService.setEnabledModules(c.id, next);
+                                    refreshData();
+                                  }}
+                                  className={cn(
+                                    "px-2 py-1 rounded text-[8px] font-black uppercase border transition-all",
+                                    isEnabled ? "bg-emerald-50 border-emerald-200 text-emerald-600" : "bg-slate-50 border-slate-100 text-slate-300"
+                                  )}
+                                >
+                                  {mod}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </td>
+                        <td className="py-8 px-4">
+                          <div className="flex flex-wrap gap-1.5">
+                            {['restaurant', 'construction', 'retail', 'market', 'service'].map(mod => {
                               const isLocked = (c.lockedModules || []).includes(mod);
+                              const isEnabled = (c.enabledModules || []).includes(mod);
+                              if (!isEnabled) return null;
                               return (
                                 <button
                                   key={mod}
@@ -396,19 +431,25 @@ export const DevDashboard: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-1.5 col-span-full">
-                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-1">Segmento de Negócio</label>
-                    <select 
-                      value={newComp.type}
-                      onChange={e => setNewComp({...newComp, type: e.target.value as BusinessMode})}
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold outline-none"
-                    >
-                      <option value="generic">Genérico (Core Only)</option>
-                      <option value="restaurant">Gastronomia / Restaurante</option>
-                      <option value="market">Mercados / Varejo Alimentar</option>
-                      <option value="construction">Materiais de Construção</option>
-                      <option value="retail">Moda / Varejo Geral</option>
-                      <option value="service">Serviços / Agenda Master</option>
-                    </select>
+                    <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-1">Ativar Módulos Base</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      {['restaurant', 'market', 'construction', 'retail', 'service'].map(mod => (
+                        <label key={mod} className="flex items-center gap-2 cursor-pointer group">
+                           <input 
+                             type="checkbox"
+                             checked={newComp.enabledModules.includes(mod)}
+                             onChange={(e) => {
+                               const next = e.target.checked 
+                                ? [...newComp.enabledModules, mod]
+                                : newComp.enabledModules.filter(m => m !== mod);
+                               setNewComp({ ...newComp, enabledModules: next });
+                             }}
+                             className="w-4 h-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500"
+                           />
+                           <span className="text-[10px] font-bold text-slate-600 uppercase group-hover:text-slate-900">{mod}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 </div>
 

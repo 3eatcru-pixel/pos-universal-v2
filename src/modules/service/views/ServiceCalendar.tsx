@@ -18,8 +18,9 @@ import {
   Monitor,
   DollarSign
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
+import { paymentService } from '../../../services/paymentService';
 import { accountService } from '../../../core/services/accountService';
 import { schedulingService } from '../services/schedulingService';
 import { serviceManagementService } from '../services/serviceManagementService';
@@ -68,11 +69,23 @@ export const ServiceCalendar: React.FC = () => {
     });
   };
 
-  const handleRegisterPayment = (appt: ServiceAppointment, e: React.MouseEvent) => {
+  const handleRegisterPayment = async (appt: ServiceAppointment, e: React.MouseEvent) => {
     e.stopPropagation(); // prevent opening another modal or cell click
-    schedulingService.updateAppointmentStatus(appt.id, 'completed');
-    alert(`Pagamento de ${formatCurrency(appt.totalPrice)} registrado com sucesso!`);
-    loadData();
+    
+    try {
+      await paymentService.processPayment({
+        amount: appt.totalPrice,
+        method: 'other', // Default for Service if no method selector
+        module: 'service',
+        orderId: appt.id
+      });
+
+      schedulingService.updateAppointmentStatus(appt.id, 'completed');
+      alert(`Pagamento de ${formatCurrency(appt.totalPrice)} registrado com sucesso!`);
+      loadData();
+    } catch (err) {
+      alert('Erro ao processar pagamento');
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {

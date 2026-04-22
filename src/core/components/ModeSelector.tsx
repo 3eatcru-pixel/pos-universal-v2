@@ -1,13 +1,14 @@
 import React from 'react';
 import { Layout, Utensils, Building2, ShieldCheck, ChevronRight, ShoppingBag, ShoppingCart, Briefcase } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { BusinessMode } from '../types';
 
 interface ModeSelectorProps {
   onSelect: (mode: BusinessMode) => void;
+  enabledModules?: string[];
 }
 
-export const ModeSelector: React.FC<ModeSelectorProps> = ({ onSelect }) => {
+export const ModeSelector: React.FC<ModeSelectorProps> = ({ onSelect, enabledModules }) => {
   const modes: { id: BusinessMode; title: string; desc: string; icon: any; color: string; bg: string }[] = [
     { id: 'restaurant', title: 'Restaurante / Bar', desc: 'Controle de mesas, KDS, comandas abertas e fluxo de cozinha otimizado.', icon: Utensils, color: 'text-orange-600', bg: 'bg-orange-100' },
     { id: 'construction', title: 'Materiais de Construção', desc: 'Múltiplas unidades, orçamentos, logística de carga e gestão de fornecedores.', icon: Building2, color: 'text-blue-600', bg: 'bg-blue-100' },
@@ -30,6 +31,10 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({ onSelect }) => {
     hidden: { y: 20, opacity: 0 },
     visible: { y: 0, opacity: 1 }
   };
+
+  const filteredModes = enabledModules 
+    ? modes.filter(m => enabledModules.includes(m.id))
+    : modes;
 
   return (
     <div className="fixed inset-0 bg-slate-950 flex items-center justify-center p-6 z-[200] overflow-y-auto">
@@ -67,7 +72,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({ onSelect }) => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {modes.map((m) => (
+          {filteredModes.map((m) => (
             <motion.button 
               key={m.id}
               variants={itemVariants}

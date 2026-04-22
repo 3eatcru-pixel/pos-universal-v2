@@ -25,9 +25,10 @@ export interface BackupMetadata {
   type: 'auto' | 'manual';
 }
 
-export interface Company {
+export interface Enterprise {
   id: string;
   name: string;
+  ownerId: string;
   businessType: BusinessMode;
   ownerEmail: string;
   ownerPhone?: string;
@@ -37,7 +38,31 @@ export interface Company {
   isPaused?: boolean;
   createdAt: number;
   lockedModules?: string[];
+  enabledModules?: string[];
   lastDevAccess?: number;
+  owners?: string[];
+}
+
+export type Company = Enterprise;
+
+export interface Shop {
+  id: string;
+  enterpriseId: string;
+  name: string;
+  regionId: string;
+  settings: any;
+}
+
+export interface Staff {
+  id: string;
+  enterpriseId: string;
+  name: string;
+  role: UserRole;
+  active: boolean;
+  pin: string;
+  assignedShopIds: string[];
+  email?: string;
+  phone?: string;
 }
 
 export interface AppNotification {

@@ -13,8 +13,11 @@ import { CentralServerView } from './core/views/CentralServerView';
 import { serverEngine } from './services/serverEngine';
 import { GlobalSettings } from './core/components/GlobalSettings';
 import { ServiceLayout } from './modules/service/views/ServiceLayout';
+import { ModuleManagement } from './core/views/ModuleManagement';
+import { BusinessConfig } from './types';
+import { firebaseService } from './services/firebaseService';
 import { ShieldAlert, Lock, Settings, LayoutGrid } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 
 // We'll import the legacy App (Restaurant) for now to keep functionality
 import LegacyApp from './App';
@@ -24,6 +27,14 @@ export default function ModularApp() {
   const [mode, setMode] = useState<BusinessMode>(() => {
     return localStorage.getItem('pos_business_mode') as BusinessMode || null;
   });
+  const [businessConfigs, setBusinessConfigs] = useState<BusinessConfig[]>([]);
+  const [isModuleConfigOpen, setIsModuleConfigOpen] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = firebaseService.subscribeCollection('businessConfigs', currentUser.companyId, null, setBusinessConfigs);
+    return () => unsub();
+  }, [currentUser]);
 
   useEffect(() => {
     if (mode) {
@@ -36,6 +47,13 @@ export default function ModularApp() {
     return <LoginView />;
   }
 
+  const company = accountService.getCompanyById(currentUser.companyId);
+  const currentBusinessConfig = businessConfigs.find(c => c.enterpriseId === currentUser.companyId);
+  
+  // Prioritize developer-defined modules in the Company object (Infrastructure level)
+  // Fallback to business config or default
+  const enabledModules = (company as any)?.enabledModules || currentBusinessConfig?.enabledModules || ['restaurant'];
+
   const deviceMode = localStorage.getItem('pos_device_mode');
   const isSystemPaused = currentUser ? accountService.getCompanyPauseStatus(currentUser.companyId) : false;
 
@@ -43,13 +61,15 @@ export default function ModularApp() {
     if (deviceMode === 'central_server' && currentUser) {
       serverEngine.start(currentUser.companyId);
     }
+    return () => {
+      serverEngine.stop();
+    };
   }, [deviceMode, currentUser]);
 
   if (deviceMode === 'central_server') {
     return <CentralServerView />;
   }
 
-  const company = accountService.getCompanyById(currentUser.companyId);
   const isMaintenance = company?.status === 'maintenance';
   const lockedModules = company?.lockedModules || [];
 
@@ -112,34 +132,21 @@ export default function ModularApp() {
     </AnimatePresence>
   );
 
-  const renderModuleSwitcher = () => {
-    if (!mode) return null;
-    return (
-      <motion.button 
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => {
-          setMode(null as any);
-          localStorage.removeItem('pos_business_mode');
-        }}
-        className="fixed bottom-8 left-8 z-[100] bg-white/80 backdrop-blur-md text-slate-900 px-6 py-4 rounded-2xl shadow-xl flex items-center gap-3 hover:bg-white transition-all font-bold text-xs uppercase tracking-tight border border-slate-200 group"
-      >
-        <LayoutGrid className="w-5 h-5 text-indigo-500 group-hover:rotate-90 transition-transform duration-500" />
-        <span>Alternar Unidade / Módulo</span>
-      </motion.button>
-    );
-  };
-
   if (!mode) {
     return (
       <div className="min-h-screen relative overflow-hidden">
         <GlobalSettings context="Painel Central" />
         {renderSystemPauseOverlay()}
         <div className={isSystemPaused ? 'pointer-events-none grayscale opacity-40 blur-sm transition-all duration-700' : 'transition-all duration-700'}>
-          <ModeSelector onSelect={handleModeSelect} />
+          <ModeSelector onSelect={handleModeSelect} enabledModules={enabledModules} />
         </div>
+
+        <AnimatePresence>
+          {isModuleConfigOpen && (
+            <ModuleManagement enterpriseId={currentUser.companyId} onClose={() => setIsModuleConfigOpen(false)} />
+          )}
+        </AnimatePresence>
+
         {renderMaintenanceOverlay()}
       </div>
     );
@@ -168,7 +175,6 @@ export default function ModularApp() {
       
       <div className={isSystemPaused ? 'pointer-events-none grayscale opacity-40 blur-sm transition-all duration-700' : 'transition-all duration-700'}>
         {content}
-        {renderModuleSwitcher()}
       </div>
       
       {renderMaintenanceOverlay()}

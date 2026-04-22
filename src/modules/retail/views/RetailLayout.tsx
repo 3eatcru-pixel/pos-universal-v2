@@ -25,7 +25,7 @@ import {
   DollarSign,
   Truck
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { DeviceRole, DeviceMode } from '../../../core/types';
 import { meshNetwork } from '../../../services/p2pSync';
 import { RetailDashboard } from './RetailDashboard';

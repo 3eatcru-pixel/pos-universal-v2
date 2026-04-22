@@ -11,11 +11,13 @@ import {
   HelpCircle,
   Smartphone,
   Globe,
-  Database
+  Database,
+  LayoutGrid
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { accountService } from '../services/accountService';
 import { cn } from '../../lib/utils';
+import { ModuleManagement } from '../views/ModuleManagement';
 
 interface GlobalSettingsProps {
   context?: string;
@@ -23,9 +25,15 @@ interface GlobalSettingsProps {
 
 export const GlobalSettings: React.FC<GlobalSettingsProps> = ({ context }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isModulesOpen, setIsModulesOpen] = useState(false);
   const [step, setStep] = useState<'menu' | 'confirm' | 'pin'>('menu');
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  const user = accountService.getCurrentUser();
+  const companyId = user?.companyId || '';
+  const isPaused = accountService.getCompanyPauseStatus(companyId);
+  const canAdmin = user?.role === 'owner' || user?.role === 'manager' || user?.role === 'dev';
 
   const resetState = () => {
     setIsOpen(false);
@@ -52,11 +60,6 @@ export const GlobalSettings: React.FC<GlobalSettingsProps> = ({ context }) => {
       alert(err.message);
     }
   };
-
-  const user = accountService.getCurrentUser();
-  const companyId = user?.companyId || '';
-  const isPaused = accountService.getCompanyPauseStatus(companyId);
-  const canAdmin = user?.role === 'owner' || user?.role === 'manager' || user?.role === 'dev';
 
   return (
     <>
@@ -107,10 +110,41 @@ export const GlobalSettings: React.FC<GlobalSettingsProps> = ({ context }) => {
                     </button>
                   </div>
 
-                  <div className="p-10 space-y-8">
+                    <div className="p-10 space-y-8">
+                       {user?.role === 'dev' && (
+                         <div className="space-y-4">
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-2">Configuração Global (DEV)</span>
+                            <button 
+                              onClick={() => { setIsModulesOpen(true); setIsOpen(false); }}
+                              className="w-full flex items-center gap-4 p-5 bg-indigo-50 rounded-[1.5rem] border border-indigo-100 hover:bg-white hover:border-indigo-200 transition-all group"
+                            >
+                                <div className="p-3 bg-white border border-indigo-200 rounded-xl text-indigo-500 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                                  <LayoutGrid className="w-5 h-5" />
+                                </div>
+                                <div className="text-left">
+                                  <h4 className="font-black text-slate-800 text-sm">Gerenciar Módulos</h4>
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Ativar restaurante, mercado, etc</p>
+                                </div>
+                            </button>
+                         </div>
+                       )}
+
                     <div className="space-y-4">
                         <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-2">Sessão</span>
                         <div className="grid grid-cols-1 gap-3">
+                          <button 
+                            onClick={() => { localStorage.removeItem('pos_business_mode'); window.location.reload(); }}
+                            className="w-full flex items-center gap-4 p-5 bg-slate-50 rounded-[1.5rem] border border-slate-100 hover:bg-white hover:border-blue-200 transition-all group"
+                          >
+                              <div className="p-3 bg-white border border-slate-200 rounded-xl text-slate-400 group-hover:text-blue-500 group-hover:border-blue-100 transition-colors">
+                                <LayoutGrid className="w-5 h-5" />
+                              </div>
+                              <div className="text-left">
+                                <h4 className="font-black text-slate-800 text-sm">Alternar Módulo</h4>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase">Trocar entre Restaurante, Mercado, etc</p>
+                              </div>
+                          </button>
+
                           <button 
                             onClick={() => { localStorage.removeItem('pos_current_user'); window.location.reload(); }}
                             className="w-full flex items-center gap-4 p-5 bg-slate-50 rounded-[1.5rem] border border-slate-100 hover:bg-white hover:border-blue-200 transition-all group"
@@ -253,7 +287,13 @@ export const GlobalSettings: React.FC<GlobalSettingsProps> = ({ context }) => {
                 </div>
               )}
 
-              <div className="p-8 text-center border-t border-slate-100 bg-slate-50/50">
+              <AnimatePresence>
+        {isModulesOpen && user && (
+          <ModuleManagement enterpriseId={user.companyId} onClose={() => setIsModulesOpen(false)} />
+        )}
+      </AnimatePresence>
+
+      <div className="p-8 text-center border-t border-slate-100 bg-slate-50/50">
                  <button className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-300 hover:text-blue-500 transition-colors flex items-center justify-center gap-2 mx-auto">
                     <HelpCircle className="w-3 h-3" /> Grid OS Security Cluster
                  </button>

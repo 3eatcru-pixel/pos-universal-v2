@@ -63,7 +63,7 @@ class MeshNetwork {
 
   private init() {
     // Attempt local LAN sync
-    const localUrl = `http://${window.location.hostname}:3000`;
+    const localUrl = `http://0.0.0.0:3000`;
     this.socket = io(localUrl, {
       reconnectionAttempts: 10,
       timeout: 5000,

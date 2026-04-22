@@ -19,11 +19,10 @@ import {
   Layers,
   MapPin
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { ServiceItem, Staff, ServiceResource } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';
-import { accountService } from '../../../core/services/accountService';
 
 type ManagementTab = 'services' | 'professionals' | 'resources' | 'clients';
 
@@ -34,22 +33,18 @@ export const ServiceManagement: React.FC = () => {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [resources, setResources] = useState<ServiceResource[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
-  const enterpriseId =
-    accountService.getCurrentCompanyId() ||
-    localStorage.getItem('rm_enterprise_id') ||
-    'local-ent';
 
   useEffect(() => {
     loadData();
-  }, [activeTab, enterpriseId]);
+  }, [activeTab]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       const [servicesData, staffData, resourcesData] = await Promise.all([
-        firebaseService.getAllDocs('services', enterpriseId),
-        firebaseService.getAllDocs('staff', enterpriseId),
-        firebaseService.getAllDocs('resources', enterpriseId)
+        firebaseService.getAllDocs('services'),
+        firebaseService.getAllDocs('staff'),
+        firebaseService.getAllDocs('resources')
       ]);
       setServices(servicesData as ServiceItem[]);
       setStaff((staffData as Staff[]).filter(s => s.role === 'Professional' || s.role === 'Waiter')); // Simplified

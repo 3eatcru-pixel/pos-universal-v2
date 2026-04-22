@@ -1,21 +1,5 @@
 import { ServiceDefinition, ServiceProvider, ServiceResource } from '../types';
 
-function resolveEnterpriseId(): string {
-  try {
-    const currentUser = localStorage.getItem('pos_current_user')
-      ? JSON.parse(localStorage.getItem('pos_current_user')!)
-      : null;
-    return (
-      currentUser?.companyId ||
-      currentUser?.enterpriseId ||
-      localStorage.getItem('rm_enterprise_id') ||
-      'demo-enterprise'
-    );
-  } catch {
-    return localStorage.getItem('rm_enterprise_id') || 'demo-enterprise';
-  }
-}
-
 class ServiceManagementService {
   private services: ServiceDefinition[] = [];
   private providers: ServiceProvider[] = [];
@@ -44,7 +28,15 @@ class ServiceManagementService {
   }
 
   private seedDemoData() {
-    const entId = resolveEnterpriseId();
+    // We don't have a specific enterpriseId here, so we pick the first one from accountService
+    // Since accountService might not be fully initialized or we depend on it, 
+    // let's assign a generic demo company or fetch it.
+    const companyStr = localStorage.getItem('pos_companies');
+    let entId = 'demo-enterprise';
+    if (companyStr) {
+      const companies = JSON.parse(companyStr);
+      if (companies.length > 0) entId = companies[0].id;
+    }
 
     this.services = [
       { id: 'srv-1', enterpriseId: entId, name: 'Corte de Cabelo', durationMinutes: 45, price: 60, category: 'Cabelo', active: true, colorCode: '#3b82f6' },

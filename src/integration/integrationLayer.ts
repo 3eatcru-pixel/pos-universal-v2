@@ -10,10 +10,20 @@ import { CoreSale, CoreProduct } from '../core/types';
  */
 class IntegrationLayer {
   
+  private getCurrentUser() {
+    try {
+      const raw = localStorage.getItem('pos_current_user');
+      if (!raw || raw === 'null') return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
   // Generic Sales Integration
   async registerSale(origin: 'restaurant' | 'construction' | 'retail' | 'market', sale: CoreSale, items: any[]) {
-    const currentUser = JSON.parse(localStorage.getItem('pos_current_user') || '{}');
-    const companyId = currentUser.companyId || 'unknown';
+    const currentUser = this.getCurrentUser();
+    const companyId = currentUser?.companyId || 'unknown';
 
     logger.log(origin, `Processing sale via Integration Layer (Company: ${companyId})`, { saleId: sale.id, companyId });
     
@@ -25,8 +35,8 @@ class IntegrationLayer {
 
   // Inventory Integration
   async updateStock(origin: 'restaurant' | 'construction' | 'retail' | 'market', productId: string, delta: number) {
-    const currentUser = JSON.parse(localStorage.getItem('pos_current_user') || '{}');
-    const companyId = currentUser.companyId || 'unknown';
+    const currentUser = this.getCurrentUser();
+    const companyId = currentUser?.companyId || 'unknown';
 
     logger.log(origin, `Updating inventory via Integration Layer (Company: ${companyId})`, { productId, delta, companyId });
     return await coreProductService.updateInventory(productId, delta);
@@ -34,8 +44,8 @@ class IntegrationLayer {
 
   // Auditor Integration
   async sendLog(origin: 'restaurant' | 'construction' | 'retail' | 'market', action: string, metadata?: any) {
-    const currentUser = JSON.parse(localStorage.getItem('pos_current_user') || '{}');
-    const companyId = currentUser.companyId || 'unknown';
+    const currentUser = this.getCurrentUser();
+    const companyId = currentUser?.companyId || 'unknown';
 
     return logger.log(origin, action, { ...metadata, companyId });
   }

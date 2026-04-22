@@ -17,7 +17,7 @@ import {
   Users,
   Award
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../../lib/utils';
 import { Staff } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';
@@ -48,7 +48,7 @@ export const MarketSectionView: React.FC<MarketSectionViewProps> = ({ type }) =>
   ]);
 
   const currentUser = accountService.getCurrentUser();
-  const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
+  const companyId = currentUser?.companyId || 'default';
 
   useEffect(() => {
     loadStaff();

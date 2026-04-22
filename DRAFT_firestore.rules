@@ -3,97 +3,149 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // ======================================================
-    // DEFAULT DENY (The Global Safety Net)
+    // 0. GLOBAL SAFETY NET
     // ======================================================
     match /{document=**} {
       allow read, write: if false;
     }
 
     // ======================================================
-    // HELPER FUNCTIONS (The Eight Pillars Primitives)
+    // 1. SECURITY PRIMITIVES (The Primitives)
     // ======================================================
     function isSignedIn() { return request.auth != null; }
-    
-    // ID Validation with Prefix Check
-    function isValidId(id, prefix) { 
-      return id is string 
-        && id.size() > prefix.size() + 1 
-        && id.size() <= 128 
-        && id.startsWith(prefix + '_')
-        && id.matches('^[a-zA-Z0-9_\\-]+$'); 
-    }
-
+    function isValidId(id) { return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
-
-    // Multi-tenant Relationship Checks
-    // Check if user is the OWNER of the company
-    function isCompanyOwner(companyId) {
-      return isSignedIn() && get(/databases/$(database)/documents/enterprises/$(companyId)).data.ownerId == request.auth.uid;
+    
+    // Identity & Role Verification
+    function isOwner(entId) {
+      return isSignedIn() && 
+        get(/databases/$(database)/documents/enterprises/$(entId)).data.ownerId == request.auth.uid;
     }
-
-    // Check if user is an EMPLOYEE of the company (Slower but secure)
-    // Note: This relies on a 'users' collection or similar mapping.
-    // Implementing a mapping: /staff/usr_{uid}_cmp_{cid} or using a query.
-    // For simplicity in this POS: we check if a staff record exists for this user and company.
-    function isEmployeeOf(companyId) {
-      return isSignedIn() && exists(/databases/$(database)/documents/staff/$(request.auth.uid + "_" + companyId));
+    
+    function getStaff(entId) {
+      return get(/databases/$(database)/documents/staff/$(request.auth.uid + "_" + entId));
     }
-
-    // ======================================================
-    // COLLECTION RULES
-    // ======================================================
-
-    // Users (usr_xxx)
-    match /users/{userId} {
-      allow get: if isSignedIn() && (userId == request.auth.uid);
-      allow create: if isSignedIn() && (userId == request.auth.uid) && isValidId(userId, 'usr');
-    }
-
-    // Enterprises (cmp_xxx)
-    match /enterprises/{companyId} {
-      allow get: if isSignedIn(); // Or restricted to owner/employees
-      allow list: if isSignedIn(); 
-      allow create: if isSignedIn() && isValidId(companyId, 'cmp') && incoming().ownerId == request.auth.uid;
-      allow update: if isCompanyOwner(companyId) && incoming().ownerId == existing().ownerId;
-    }
-
-    // Shops (str_xxx)
-    match /shops/{shopId} {
-      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
-      allow create: if isSignedIn() && isValidId(shopId, 'str') && isCompanyOwner(incoming().companyId);
-      allow update: if isSignedIn() && isCompanyOwner(existing().companyId);
-    }
-
-    // Staff (emp_xxx)
-    match /staff/{staffId} {
-      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
-      allow create: if isSignedIn() && isCompanyOwner(incoming().companyId);
-      allow update: if isSignedIn() && isCompanyOwner(existing().companyId);
-    }
-
-    // Orders (ord_xxx)
-    match /orders/{orderId} {
-      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
-      allow create: if isSignedIn() && (isCompanyOwner(incoming().companyId) || isEmployeeOf(incoming().companyId));
-      allow update: if isSignedIn() && (isCompanyOwner(existing().companyId) || isEmployeeOf(existing().companyId));
-    }
-
-    // Products (pro_xxx)
-    match /products/{productId} {
-      allow get, list: if isSignedIn() && (isCompanyOwner(resource.data.companyId) || isEmployeeOf(resource.data.companyId));
-      allow create: if isSignedIn() && isCompanyOwner(incoming().companyId);
-      allow update: if isSignedIn() && isCompanyOwner(existing().companyId);
-    }
-
-    // Invites (inv_xxx)
-    match /invites/{inviteId} {
-      allow get: if isSignedIn(); // Anyone can see an invite if they have the ID (to join)
-      allow create: if isSignedIn() && isCompanyOwner(incoming().companyId);
-      allow update: if isSignedIn() && (
-        isCompanyOwner(existing().companyId) || 
-        (incoming().used == true && incoming().usedBy == request.auth.uid)
+    
+    function hasRole(entId, roles) {
+      return isSignedIn() && (
+        isOwner(entId) || 
+        (exists(/databases/$(database)/documents/staff/$(request.auth.uid + "_" + entId)) && 
+         getStaff(entId).data.role in roles)
       );
     }
+
+    // Admin Check (Hardcoded Super-Admin for now)
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == "3eatcru@gmail.com"; 
+    }
+
+    // ======================================================
+    // 2. VALIDATION HELPERS
+    // ======================================================
+    
+    function isValidEnterprise(data) {
+      return data.keys().hasAll(['id', 'name', 'ownerId', 'createdAt']) &&
+             data.keys().size() == 4 &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.ownerId == request.auth.uid &&
+             data.createdAt == request.time;
+    }
+
+    function isValidShop(data) {
+      return data.keys().hasAll(['id', 'name', 'enterpriseId']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.enterpriseId is string &&
+             // Optional fields if present must be valid
+             (!('address' in data) || data.address is string) &&
+             (!('cnpj' in data) || data.cnpj is string);
+    }
+
+    function isValidStaff(data) {
+      return data.keys().hasAll(['id', 'enterpriseId', 'name', 'role', 'active']) &&
+             data.id is string &&
+             data.enterpriseId is string &&
+             data.name is string && data.name.size() <= 100 &&
+             data.role in ['owner', 'manager', 'waiter', 'chef', 'regional_manager'] &&
+             data.active is bool;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'enterpriseId', 'shopId', 'name', 'price', 'category', 'active']) &&
+             data.price is number && data.price >= 0 &&
+             data.enterpriseId is string &&
+             data.shopId is string;
+    }
+
+    // ======================================================
+    // 3. COLLECTION RULES
+    // ======================================================
+
+    match /enterprises/{entId} {
+      allow get: if isValidId(entId) && (isAdmin() || isOwner(entId));
+      allow create: if isValidId(entId) && isValidEnterprise(incoming());
+      allow update: if isValidId(entId) && isOwner(entId) && 
+                      isValidEnterprise(incoming()) &&
+                      incoming().ownerId == existing().ownerId &&
+                      incoming().createdAt == existing().createdAt;
+    }
+
+    match /staff/{staffId} {
+      // Identity-bound PII protection
+      allow get: if isValidId(staffId) && (
+        isAdmin() || 
+        (isSignedIn() && (resource.data.enterpriseId != null && hasRole(resource.data.enterpriseId, ['owner', 'manager']))) ||
+        (isSignedIn() && staffId.startsWith(request.auth.uid))
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || 
+        (resource.data.enterpriseId != null && hasRole(resource.data.enterpriseId, ['owner', 'manager']))
+      );
+      allow create: if isValidId(staffId) && isValidStaff(incoming()) && isOwner(incoming().enterpriseId);
+      allow update: if isValidId(staffId) && hasRole(existing().enterpriseId, ['owner', 'manager']) && 
+                      isValidStaff(incoming()) &&
+                      incoming().enterpriseId == existing().enterpriseId;
+    }
+
+    match /shops/{shopId} {
+      allow read: if isSignedIn() && resource.data.enterpriseId != null && hasRole(resource.data.enterpriseId, ['owner', 'manager', 'waiter', 'chef']);
+      allow create: if isValidId(shopId) && isValidShop(incoming()) && isOwner(incoming().enterpriseId);
+      allow update: if isValidId(shopId) && hasRole(existing().enterpriseId, ['owner', 'manager']) && 
+                      isValidShop(incoming()) &&
+                      incoming().enterpriseId == existing().enterpriseId;
+    }
+
+    match /products/{productId} {
+      allow read: if isSignedIn() && hasRole(resource.data.enterpriseId, ['owner', 'manager', 'waiter', 'chef']);
+      allow create: if isValidId(productId) && isValidProduct(incoming()) && hasRole(incoming().enterpriseId, ['owner', 'manager']);
+      allow update: if isValidId(productId) && hasRole(existing().enterpriseId, ['owner', 'manager']) && 
+                      isValidProduct(incoming()) &&
+                      incoming().enterpriseId == existing().enterpriseId;
+      allow delete: if isValidId(productId) && hasRole(existing().enterpriseId, ['owner']);
+    }
+
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && hasRole(resource.data.enterpriseId, ['owner', 'manager', 'waiter', 'chef']);
+      allow create: if isValidId(orderId) && hasRole(incoming().enterpriseId, ['owner', 'manager', 'waiter']);
+      allow update: if isValidId(orderId) && hasRole(existing().enterpriseId, ['owner', 'manager', 'waiter', 'chef']) &&
+                      // Order locking - cannot edit if status is delivered/cancelled unless admin
+                      (existing().status in ['pending', 'preparing', 'ready'] || isAdmin());
+    }
+
+    // Master Keys: Used for account claiming
+    match /masterKeys/{keyId} {
+      allow get: if isValidId(keyId);
+      allow create: if isAdmin();
+      allow update: if isValidId(keyId) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt', 'enterpriseId', 'companyId', 'usedByDevice', 'updatedAt']) &&
+                      incoming().used == true &&
+                      existing().used == false;
+    }
+    
+    // Safety Net for Sub-collections
+    match /backups/{id} { allow read, write: if isOwner(resource.data.enterpriseId || incoming().enterpriseId); }
+    match /tables/{id} { allow read, write: if isSignedIn() && hasRole(resource.data.enterpriseId || incoming().enterpriseId, ['owner', 'manager', 'waiter']); }
   }
 }

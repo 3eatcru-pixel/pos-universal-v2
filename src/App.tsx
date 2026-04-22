@@ -80,7 +80,7 @@ import {
   Truck,
   Briefcase
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   AreaChart, 
   Area, 
@@ -140,6 +140,7 @@ import { MOCK_PRODUCTS, MOCK_TABLES, MOCK_INVENTORY, MOCK_STAFF, MOCK_SHIFTS, MO
 import { cn, formatCurrency } from './lib/utils';
 import { printerService } from './services/printerService';
 import { firebaseService } from './services/firebaseService';
+import { paymentService } from './services/paymentService';
 import { db } from './firebase';
 import { canAccessTenant, ensureFirebaseSession } from './services/authSession';
 
@@ -149,7 +150,6 @@ import { meshNetwork } from './services/p2pSync';
 import { dbLocal } from './services/db';
 
 export default function App() {
-  const devPanelEnabled = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_PANEL === 'true';
   const [enterpriseId, setEnterpriseId] = useState<string | null>(() => {
     return localStorage.getItem('rm_enterprise_id');
   });
@@ -208,8 +208,6 @@ export default function App() {
   const [modalStaffRole, setModalStaffRole] = useState<UserRole>('waiter');
 
   // --- Data Provider Switch ---
-  // If we are in local mode, we use MOCK data and persist changes to local storage.
-  // This allows the app to function 'default on device' without any external Keys.
   
   useEffect(() => {
     if (isLocalMode) {
@@ -235,11 +233,27 @@ export default function App() {
     };
   }, [isLocalMode]);
 
+  useEffect(() => {
+    const handleCashRegister = (e: any) => {
+      const { amount, change } = e.detail;
+      // In a real device, this would invoke the hardware bridge
+      // For the UI, we show a confirmation.
+      alert(`GAVETA DE DINHEIRO ABERTA\nValor: ${formatCurrency(amount)}\nTroco: ${formatCurrency(change)}`);
+    };
+
+    window.addEventListener('cash-register-open', handleCashRegister);
+    return () => window.removeEventListener('cash-register-open', handleCashRegister);
+  }, []);
+
   // Sync Logic
   useEffect(() => {
     if (!authReady && !isLocalMode) return;
-
-    const globalUnsubs: Array<() => void> = [];
+    // These collections should be subscribed to globally, regardless of enterpriseId
+    const globalUnsubs = [
+      firebaseService.subscribeCollection('masterKeys', null, null, setMasterKeys),
+      firebaseService.subscribeCollection('enterprises', null, null, setEnterprises),
+      firebaseService.subscribeCollection('rolePermissions', null, null, setRolePermissions),
+    ];
 
     if (!enterpriseId && !isLocalMode) {
       return () => globalUnsubs.forEach(u => u());
@@ -266,26 +280,16 @@ export default function App() {
       firebaseService.subscribeStaff(enterpriseId, setStaff),
       firebaseService.subscribeCollection('businessConfigs', enterpriseId, null, setBusinessConfigs),
       firebaseService.subscribeCollection('staffSchedules', enterpriseId, null, setStaffSchedules),
-      firebaseService.subscribeCollection('rolePermissions', enterpriseId, null, setRolePermissions),
     ];
     
     return () => {
       globalUnsubs.forEach(u => u());
       unsubs.forEach(u => u());
     };
-  }, [enterpriseId, isLocalMode, authReady]);
+  }, [enterpriseId, isLocalMode]);
 
   useEffect(() => {
-    if (!devPanelEnabled || !isDevMode || isLocalMode || !authReady) return;
-    const unsubs = [
-      firebaseService.subscribeCollection('masterKeys', null, null, setMasterKeys),
-      firebaseService.subscribeCollection('enterprises', null, null, setEnterprises),
-    ];
-    return () => unsubs.forEach(u => u());
-  }, [devPanelEnabled, isDevMode, isLocalMode, authReady]);
-
-  useEffect(() => {
-    if (isLocalMode || !authReady || !selectedShopId || !enterpriseId) return;
+    if (isLocalMode || !selectedShopId || !enterpriseId) return;
     const unsubs = [
       firebaseService.subscribeCollection('tables', enterpriseId, selectedShopId, setTables),
       firebaseService.subscribeCollection('products', enterpriseId, selectedShopId, setProducts),
@@ -298,29 +302,27 @@ export default function App() {
       firebaseService.subscribeCollection('notifications', enterpriseId, selectedShopId, setNotifications),
     ];
     return () => unsubs.forEach(u => u());
-  }, [selectedShopId, enterpriseId, isLocalMode, authReady]);
+  }, [selectedShopId, enterpriseId, isLocalMode]);
 
   // Seeding Logic (Run once if empty)
   useEffect(() => {
-    const allowAutoSeed = import.meta.env.DEV && import.meta.env.VITE_ENABLE_AUTO_SEED === 'true';
-    if (!allowAutoSeed || isLocalMode || !enterpriseId || !authReady) return;
-    if (staff.length === 0 && shops.length === 0) {
+    if (staff.length === 0 && shops.length === 0 && enterprises.length === 0) {
        // Avoid multiple seeds if called in parallel
        console.log("Seeding initial data...");
        firebaseService.seedData({
-         shops: MOCK_SHOPS.map(s => ({ ...s, id: `${enterpriseId}-${s.id}`, enterpriseId, companyId: enterpriseId })),
-         staff: MOCK_STAFF.map(s => ({ ...s, id: `${enterpriseId}-${s.id}`, enterpriseId, companyId: enterpriseId })),
-         products: MOCK_PRODUCTS.map(p => ({ ...p, id: `${enterpriseId}-${p.id}`, enterpriseId, companyId: enterpriseId })),
-         tables: MOCK_TABLES.map(t => ({ ...t, id: `${enterpriseId}-${t.id}`, enterpriseId, companyId: enterpriseId })),
-         orders: MOCK_ORDERS.map(o => ({ ...o, id: `${enterpriseId}-${o.id}`, enterpriseId, companyId: enterpriseId })),
-         inventory: MOCK_INVENTORY.map(i => ({ ...i, id: `${enterpriseId}-${i.id}`, enterpriseId, companyId: enterpriseId })),
+         shops: MOCK_SHOPS,
+         staff: MOCK_STAFF,
+         products: MOCK_PRODUCTS,
+         tables: MOCK_TABLES,
+         orders: MOCK_ORDERS,
+         inventory: MOCK_INVENTORY,
          permissions: MOCK_PERMISSIONS,
-         printers: MOCK_PRINTERS.map(p => ({ ...p, id: `${enterpriseId}-${p.id}`, enterpriseId, companyId: enterpriseId })),
-         businessConfigs: MOCK_BUSINESS_CONFIG.map(c => ({ ...c, id: `${enterpriseId}-${c.id}`, enterpriseId, companyId: enterpriseId })),
-         staffSchedules: MOCK_SCHEDULES.map(s => ({ ...s, id: `${enterpriseId}-${s.id}`, enterpriseId, companyId: enterpriseId }))
+         printers: MOCK_PRINTERS,
+         businessConfigs: MOCK_BUSINESS_CONFIG,
+         staffSchedules: MOCK_SCHEDULES
        });
     }
-  }, [staff, shops, enterpriseId, isLocalMode, authReady]);
+  }, [staff, shops, enterprises]);
 
   useEffect(() => {
     if (enterpriseId) localStorage.setItem('rm_enterprise_id', enterpriseId);
@@ -908,7 +910,6 @@ export default function App() {
 
   // Create Owner Modal State
   const [isCreateOwnerModalOpen, setIsCreateOwnerModalOpen] = useState(false);
-  const [isCreatingOwner, setIsCreatingOwner] = useState(false);
   const [ownerCreationData, setOwnerCreationData] = useState({ 
     masterKey: '',
     name: '', 
@@ -1001,17 +1002,8 @@ export default function App() {
         meshNetwork.broadcast('order:update', orderData);
         meshNetwork.broadcast('table:update', { id: table.id, status: 'occupied', currentOrderId: orderId });
       } else {
-        try {
-          await firebaseService.openTableWithOrderAtomic(table.id, orderData);
-        } catch (err: any) {
-          const msg = String(err?.message || '');
-          if (msg.includes('table_unavailable')) {
-            alert('Mesa já foi ocupada por outro terminal. Atualize a tela.');
-          } else {
-            alert('Não foi possível abrir a mesa neste momento.');
-          }
-          return;
-        }
+        await firebaseService.saveItem('orders', orderId, orderData);
+        await firebaseService.updateTableStatus(table.id, 'occupied', orderId);
       }
       
       setSelectedTable({ ...table, status: 'occupied', currentOrderId: orderId });
@@ -1250,20 +1242,9 @@ Obrigado pela preferência!
       meshNetwork.broadcast('order:update', orderData);
       if (!isTakeaway) meshNetwork.broadcast('table:update', { id: selectedTable.id, status: 'occupied', currentOrderId: orderId });
     } else {
-      try {
-        if (isTakeaway) {
-          await firebaseService.saveItem('orders', orderId, orderData);
-        } else {
-          await firebaseService.upsertOrderForTableAtomic(orderData);
-        }
-      } catch (err: any) {
-        const msg = String(err?.message || '');
-        if (msg.includes('table_lock_mismatch') || msg.includes('table_unavailable')) {
-          alert('Conflito de mesa detectado. Reabra a mesa para sincronizar e tente novamente.');
-        } else {
-          alert('Erro ao salvar pedido no servidor.');
-        }
-        return;
+      await firebaseService.saveItem('orders', orderId, orderData);
+      if (!isTakeaway) {
+        await firebaseService.updateTableStatus(selectedTable.id, 'occupied', orderId);
       }
     }
 
@@ -1396,15 +1377,9 @@ Obrigado pela preferência!
         setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'free', currentOrderId: undefined } : t));
       } else {
         if (order) {
-          try {
-            await firebaseService.completeOrderAndReleaseTableAtomic(order.id, { status: 'cancelled' }, tableId);
-          } catch {
-            alert('Conflito ao cancelar mesa. Atualize os dados e tente novamente.');
-            return;
-          }
-        } else {
-          await firebaseService.updateTableStatus(tableId, 'free', null);
+          await firebaseService.updateItem('orders', order.id, { status: 'cancelled' });
         }
+        await firebaseService.updateTableStatus(tableId, 'free', null);
       }
       setSelectedTable(null);
       setCart([]);
@@ -1426,12 +1401,8 @@ Obrigado pela preferência!
           setOrders(prev => prev.map(o => o.id === order?.id ? { ...o, status: 'cancelled', items: updatedItems } : o));
           setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'free', currentOrderId: undefined } : t));
         } else if (order) {
-          try {
-            await firebaseService.completeOrderAndReleaseTableAtomic(order.id, { status: 'cancelled', items: updatedItems }, tableId);
-          } catch {
-            alert('Conflito ao cancelar conta da mesa. Atualize os dados e tente novamente.');
-            return;
-          }
+          await firebaseService.updateItem('orders', order.id, { status: 'cancelled', items: updatedItems });
+          await firebaseService.updateTableStatus(tableId, 'free', null);
         }
         setSelectedTable(null);
         setCart([]);
@@ -1524,16 +1495,22 @@ Obrigado pela preferência!
         meshNetwork.broadcast('table:update', { id: order.tableId, status: 'free', currentOrderId: undefined });
       }
     } else {
-      try {
-        if (order.tableId && order.tableId !== 'takeaway') {
-          await firebaseService.completeOrderAndReleaseTableAtomic(orderId, updates, order.tableId);
-        } else {
-          await firebaseService.updateItem('orders', orderId, updates);
-        }
-      } catch {
-        alert('Conflito ao finalizar pagamento. Atualize os dados e tente novamente.');
-        return;
+      await firebaseService.updateItem('orders', orderId, updates);
+      if (order.tableId && order.tableId !== 'takeaway') {
+        await firebaseService.updateTableStatus(order.tableId, 'free');
       }
+    }
+
+    // NEW: Save each payment as a Transaction record for History/Receipt audit
+    for (const p of payments) {
+      await paymentService.processPayment({
+        orderId: orderId,
+        amount: p.amount,
+        method: p.method as any,
+        module: 'restaurant',
+        shopId: order.shopId,
+        change: p.change
+      });
     }
     
     if (shouldSendToKitchen) {
@@ -1682,162 +1659,151 @@ Obrigado pela preferência!
   };
 
   const handleCreateOwner = async () => {
-    if (isCreatingOwner) return;
+    // Verificar se a chave existe e não foi usada
+    const validKey = masterKeys.find(k => k.key === ownerCreationData.masterKey && !k.used);
 
-    const ownerName = ownerCreationData.name.trim();
-    const companyName = ownerCreationData.companyName.trim();
-    const password = ownerCreationData.password.trim();
-    const pin = ownerCreationData.pin.trim();
-    const normalizedMasterKey = ownerCreationData.masterKey.trim().toUpperCase();
-    const normalizedEmail = ownerCreationData.email.trim().toLowerCase();
-
-    if (!normalizedMasterKey) {
-      alert('Informe a chave mestra de ativacao.');
+    if (!validKey) {
+      alert('Chave Mestra inválida ou já utilizada!');
       return;
     }
 
-    if (!ownerName || !companyName || !password || pin.length !== 4) {
-      alert('Preencha os campos obrigatorios (Nome, Empresa, Senha e PIN de 4 digitos).');
+    if (!ownerCreationData.name || ownerCreationData.pin.length !== 4 || !ownerCreationData.password) {
+      alert('Preencha os campos obrigatórios (Nome, Senha e PIN de 4 dígitos)');
       return;
     }
 
-    setIsCreatingOwner(true);
-
-    const ownerId = `owner-${Date.now()}`;
-    const companySlug = companyName
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 28);
-    const enterpriseIdForNewAccount = `${companySlug || 'empresa'}-${Math.random().toString(36).slice(2, 7)}`;
-    const now = Date.now();
-
-    try {
-      const keyConsume = await firebaseService.consumeMasterKey(normalizedMasterKey, {
-        usedBy: ownerId,
+    const ownerId = 'owner-' + Date.now();
+    // Usar a chave ou parte dela como enterpriseId ou pedir pro dono criar (vamos usar o id da empresa que ele quer)
+    const enterpriseIdForNewAccount = ownerCreationData.companyName.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substring(2, 5);
+    
+    // 1. Criar Lojas baseadas nos locais informados
+    const shopIds: string[] = [];
+    for (const loc of ownerCreationData.locations) {
+      if (!loc.trim()) continue;
+      const shopId = 'shop-' + Math.random().toString(36).substr(2, 9);
+      const newShop: Shop = {
+        id: shopId,
         enterpriseId: enterpriseIdForNewAccount,
-        deviceId: localStorage.getItem('rm_device_id') || undefined,
-      });
-
-      if (!keyConsume.ok) {
-        const reasonMap: Record<string, string> = {
-          invalid_key: 'Chave mestra invalida.',
-          already_used: 'Esta chave ja foi utilizada.',
-          expired_key: 'Esta chave expirou.',
-          revoked_key: 'Esta chave foi revogada.',
-          empty_key: 'Informe a chave mestra.',
-          consume_failed: 'Falha ao validar a chave. Tente novamente.',
-        };
-        alert(reasonMap[keyConsume.reason] || 'Falha ao validar a chave mestra.');
-        return;
-      }
-
-      const locations = ownerCreationData.locations
-        .map((loc) => loc.trim())
-        .filter((loc, index, arr) => !!loc && arr.indexOf(loc) === index);
-
-      const shopIds: string[] = [];
-      const shopsToCreate = locations.length > 0 ? locations : ['Matriz'];
-
-      for (const loc of shopsToCreate) {
-        const shopId = `shop-${Math.random().toString(36).slice(2, 11)}`;
-        const newShop: Shop = {
-          id: shopId,
+        name: ownerCreationData.companyName + ' - ' + loc,
+        regionId: 'default',
+        settings: { name: ownerCreationData.companyName }
+      };
+      await firebaseService.saveItem('shops', shopId, newShop);
+      
+      // Adicionar mesas padrão (40 mesas total, 20 por salão) para cada loja criada
+      for (let i = 1; i <= 20; i++) {
+        const tableId = `t-${shopId}-p${i}`;
+        await firebaseService.saveItem('tables', tableId, {
+          id: tableId,
           enterpriseId: enterpriseIdForNewAccount,
-          companyId: enterpriseIdForNewAccount,
-          name: `${companyName} - ${loc}`,
-          regionId: 'default',
-          settings: { name: companyName }
-        };
-        await firebaseService.saveItem('shops', shopId, newShop);
-
-        for (let i = 1; i <= 20; i++) {
-          const tableId = `t-${shopId}-p${i}`;
-          await firebaseService.saveItem('tables', tableId, {
-            id: tableId,
-            enterpriseId: enterpriseIdForNewAccount,
-            companyId: enterpriseIdForNewAccount,
-            shopId,
-            number: i,
-            status: 'free',
-            capacity: i <= 8 ? 2 : 4,
-            position: { x: ((i - 1) % 5) * 160 + 80, y: Math.floor((i - 1) / 5) * 140 + 80 },
-            area: 'Salao Principal'
-          });
-        }
-
-        for (let i = 1; i <= 20; i++) {
-          const tableId = `t-${shopId}-v${i}`;
-          await firebaseService.saveItem('tables', tableId, {
-            id: tableId,
-            enterpriseId: enterpriseIdForNewAccount,
-            companyId: enterpriseIdForNewAccount,
-            shopId,
-            number: i + 20,
-            status: 'free',
-            capacity: 2,
-            position: { x: ((i - 1) % 5) * 160 + 80, y: Math.floor((i - 1) / 5) * 140 + 80 },
-            area: 'Varanda Gourmet'
-          });
-        }
-
-        shopIds.push(shopId);
+          shopId: shopId,
+          number: i,
+          status: 'free',
+          capacity: i <= 8 ? 2 : 4,
+          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
+          area: 'Salão Principal'
+        });
+      }
+      for (let i = 1; i <= 20; i++) {
+        const tableId = `t-${shopId}-v${i}`;
+        await firebaseService.saveItem('tables', tableId, {
+          id: tableId,
+          enterpriseId: enterpriseIdForNewAccount,
+          shopId: shopId,
+          number: i + 20,
+          status: 'free',
+          capacity: 2,
+          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
+          area: 'Varanda Gourmet'
+        });
       }
 
-      await firebaseService.saveItem('settings', 'company', {
-        enterpriseId: enterpriseIdForNewAccount,
-        companyId: enterpriseIdForNewAccount,
-        name: companyName,
-        cnpj: ownerCreationData.taxId,
-        recoveryEmail: normalizedEmail,
-        shopPassword: password,
-        createdAt: now,
-      } as any);
-
-      const newOwner: Staff = {
-        id: ownerId,
-        enterpriseId: enterpriseIdForNewAccount,
-        companyId: enterpriseIdForNewAccount,
-        name: ownerName,
-        role: 'owner',
-        active: true,
-        pin,
-        assignedShopIds: shopIds,
-        email: normalizedEmail,
-        phone: ownerCreationData.taxId
-      } as any;
-
-      await firebaseService.saveItem('staff', ownerId, newOwner);
-      await firebaseService.saveItem('enterprises', enterpriseIdForNewAccount, {
-        id: enterpriseIdForNewAccount,
-        name: companyName,
-        ownerId,
-        owners: [ownerId],
-        regions: [],
-        createdAt: now,
-      } as any);
-
-      setIsCreateOwnerModalOpen(false);
-      setOwnerCreationData({
-        masterKey: '',
-        name: '',
-        email: '',
-        password: '',
-        pin: '',
-        companyName: '',
-        taxId: '',
-        locations: ['']
-      });
-      setEnterpriseId(enterpriseIdForNewAccount);
-      alert('Conta criada com sucesso! Voce ja esta conectado a sua nova empresa. Use seu PIN para entrar no sistema.');
-    } catch (error) {
-      console.error('Falha ao criar conta de dono:', error);
-      alert('Falha ao criar a conta. Se a chave ja foi consumida, contate o suporte para auditoria.');
-    } finally {
-      setIsCreatingOwner(false);
+      shopIds.push(shopId);
     }
+
+    // Se nenhum local foi preenchido, cria pelo menos uma loja padrão
+    if (shopIds.length === 0) {
+      const shopId = 'shop-1';
+      await firebaseService.saveItem('shops', shopId, {
+        id: shopId,
+        enterpriseId: enterpriseIdForNewAccount,
+        name: ownerCreationData.companyName || 'Minha Loja',
+        regionId: 'default',
+        settings: { name: ownerCreationData.companyName || 'Minha Loja' }
+      });
+
+      for (let i = 1; i <= 20; i++) {
+        const tableId = `t-${shopId}-p${i}`;
+        await firebaseService.saveItem('tables', tableId, {
+          id: tableId,
+          enterpriseId: enterpriseIdForNewAccount,
+          shopId: shopId,
+          number: i,
+          status: 'free',
+          capacity: i <= 8 ? 2 : 4,
+          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
+          area: 'Salão Principal'
+        });
+      }
+      for (let i = 1; i <= 20; i++) {
+        const tableId = `t-${shopId}-v${i}`;
+        await firebaseService.saveItem('tables', tableId, {
+          id: tableId,
+          enterpriseId: enterpriseIdForNewAccount,
+          shopId: shopId,
+          number: i + 20,
+          status: 'free',
+          capacity: 2,
+          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
+          area: 'Varanda Gourmet'
+        });
+      }
+      shopIds.push(shopId);
+    }
+
+    if (ownerCreationData.companyName) {
+      await firebaseService.saveItem('settings', 'company', { 
+        name: ownerCreationData.companyName,
+        cnpj: ownerCreationData.taxId,
+        recoveryEmail: ownerCreationData.email,
+        shopPassword: ownerCreationData.password 
+      } as any);
+    }
+
+    const newOwner: Staff = {
+      id: ownerId,
+      enterpriseId: enterpriseIdForNewAccount,
+      name: ownerCreationData.name,
+      role: 'owner',
+      active: true,
+      pin: ownerCreationData.pin,
+      assignedShopIds: shopIds,
+      email: ownerCreationData.email,
+      phone: ownerCreationData.taxId 
+    } as any;
+
+    await firebaseService.saveItem('staff', ownerId, newOwner);
+    
+    // Marcar chave como usada
+    await firebaseService.updateItem('masterKeys', validKey.id, {
+      used: true,
+      usedBy: ownerId,
+      enterpriseId: enterpriseIdForNewAccount
+    });
+    
+    setIsCreateOwnerModalOpen(false);
+    setOwnerCreationData({ 
+      masterKey: '',
+      name: '', 
+      email: '',
+      password: '',
+      pin: '', 
+      companyName: '',
+      taxId: '',
+      locations: ['']
+    });
+    setEnterpriseId(enterpriseIdForNewAccount);
+    alert('Conta criada com sucesso! Você já está conectado à sua nova empresa. Use seu PIN para entrar no sistema.');
   };
 
   const handleCreateIncident = () => {
@@ -1983,7 +1949,7 @@ Obrigado pela preferência!
     if (newStatus === 'ready') {
       const table = tables.find(t => t.id === order.tableId);
       if (table) {
-        await firebaseService.setTableReadyFlagAtomic(table.id, order.id, true);
+        await firebaseService.updateItem('tables', table.id, { hasReadyItems: true });
         await firebaseService.addItem('notifications', {
           shopId: (selectedShopId || 'shop-1'),
           message: `🔔 Pedido pronto para a Mesa 0${table.number}`,
@@ -1996,7 +1962,7 @@ Obrigado pela preferência!
     }
 
     if (newStatus === 'delivered') {
-      await firebaseService.setTableReadyFlagAtomic(order.tableId, order.id, false);
+      await firebaseService.updateItem('tables', order.tableId, { hasReadyItems: false });
     }
   };
 
@@ -2013,16 +1979,10 @@ Obrigado pela preferência!
       return item;
     });
 
-    if (isLocalMode) {
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, items: updatedItems, status: 'preparing' } : o));
-      meshNetwork.broadcast('order:update', { id: orderId, items: updatedItems, status: 'preparing' });
-    } else {
-      await firebaseService.upsertOrderForTableAtomic({
-        ...order,
-        items: updatedItems,
-        status: 'preparing'
-      });
-    }
+    await firebaseService.updateItem('orders', orderId, { 
+      items: updatedItems, 
+      status: 'preparing' 
+    });
   };
 
   const handleMarkItemsReady = async (orderId: string, isBar: boolean) => {
@@ -2047,20 +2007,14 @@ Obrigado pela preferência!
        targetStatus = order.closedAt ? 'delivered' : 'ready';
     }
 
-    if (isLocalMode) {
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, items: updatedItems, status: targetStatus } : o));
-      meshNetwork.broadcast('order:update', { id: orderId, items: updatedItems, status: targetStatus });
-    } else {
-      await firebaseService.upsertOrderForTableAtomic({
-        ...order,
-        items: updatedItems,
-        status: targetStatus
-      });
-    }
+    await firebaseService.updateItem('orders', orderId, { 
+      items: updatedItems, 
+      status: targetStatus 
+    });
 
     const table = tables.find(t => t.id === order.tableId);
     if (anyReady && order.tableId !== 'takeaway') {
-      await firebaseService.setTableReadyFlagAtomic(order.tableId, order.id, true);
+      await firebaseService.updateItem('tables', order.tableId, { hasReadyItems: true });
     }
 
     await firebaseService.addItem('notifications', {
@@ -2087,18 +2041,14 @@ Obrigado pela preferência!
     const updatedItems = order.items.map(i => i.id === itemId ? { ...i, status: 'delivered' as ItemStatus } : i);
     const allDelivered = updatedItems.every(i => i.status === 'delivered' || i.status === 'voided');
 
-    if (allDelivered && order.tableId !== 'takeaway') {
-      await firebaseService.completeOrderAndReleaseTableAtomic(orderId, {
-        items: updatedItems,
-        status: 'delivered'
-      }, order.tableId);
-      return;
-    }
-
     await firebaseService.updateItem('orders', orderId, {
       items: updatedItems,
-      status: order.status
+      status: allDelivered ? 'delivered' : order.status
     });
+
+    if (allDelivered && order.tableId !== 'takeaway') {
+      await firebaseService.updateTableStatus(order.tableId, 'free');
+    }
   };
   const handleDeliverOrder = (orderId: string) => {
     handleOrderStatusChange(orderId, 'delivered');
@@ -2337,11 +2287,6 @@ Obrigado pela preferência!
             </div>
           </div>
 
-          {authError && (
-            <p className="mb-4 text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
-              {authError}
-            </p>
-          )}
           <div className="space-y-6">
             {/* Secondary Widgets */}
             <div className="sleek-card p-6 bg-red-50/30 border-red-100/50">
@@ -3348,7 +3293,7 @@ Obrigado pela preferência!
        if (existingOrder) {
           if (cart.length > 0 && confirm("Esta mesa já tem um pedido ativo. Deseja mesclar seu carrinho atual com o pedido da mesa?")) {
              const mergedItems = [...existingOrder.items, ...cart.map(i => ({ ...i, sentToKitchen: false }))];
-             await firebaseService.upsertOrderForTableAtomic({ ...existingOrder, items: mergedItems });
+             await firebaseService.updateItem('orders', existingOrder.id, { items: mergedItems });
              setCart(mergedItems);
           } else {
              setCart(existingOrder.items);
@@ -3371,12 +3316,8 @@ Obrigado pela preferência!
          subtotal: 0,
          total: 0
        };
-       try {
-         await firebaseService.openTableWithOrderAtomic(table.id, newOrder);
-       } catch {
-         alert('Mesa não está mais disponível. Atualize a tela e tente novamente.');
-         return;
-       }
+       await firebaseService.saveItem('orders', orderId, newOrder);
+       await firebaseService.updateTableStatus(table.id, 'occupied', orderId);
     }
     setSelectedTable(table);
   };
@@ -4880,7 +4821,7 @@ Obrigado pela preferência!
                   <input 
                     type="password" 
                     value={ownerCreationData.masterKey}
-                    onChange={e => setOwnerCreationData({...ownerCreationData, masterKey: e.target.value.toUpperCase()})}
+                    onChange={e => setOwnerCreationData({...ownerCreationData, masterKey: e.target.value})}
                     className="w-full bg-white border-2 border-emerald-100 rounded-2xl pl-11 pr-4 py-3 font-black text-emerald-700 placeholder:text-emerald-200 outline-none focus:border-emerald-500 transition-all"
                     placeholder="code-XX"
                   />
@@ -5001,20 +4942,10 @@ Obrigado pela preferência!
 
           <button 
             onClick={handleCreateOwner}
-            disabled={isCreatingOwner}
             className="w-full bg-emerald-500 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-xl shadow-emerald-500/20 mt-10 flex items-center justify-center gap-3"
           >
-            {isCreatingOwner ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Processando...
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="w-6 h-6" />
-                Ativar Conta do Dono
-              </>
-            )}
+            <ShieldCheck className="w-6 h-6" />
+            Ativar Conta do Dono
           </button>
         </motion.div>
       </div>
@@ -5089,7 +5020,7 @@ Obrigado pela preferência!
   const renderCompanyLogin = () => {
     return (
       <div className="fixed inset-0 bg-slate-900 flex items-center justify-center z-[110] p-4 font-sans">
-        {devPanelEnabled && isDevMode && renderDeveloperPanel()}
+        {isDevMode && renderDeveloperPanel()}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -5097,7 +5028,6 @@ Obrigado pela preferência!
         >
           <div 
             onClick={() => {
-              if (!devPanelEnabled) return;
               const newClicks = devClicks + 1;
               setDevClicks(newClicks);
               if (newClicks >= 7) {
@@ -5129,7 +5059,7 @@ Obrigado pela preferência!
             <div className="grid grid-cols-1 gap-3">
               <button 
                 onClick={() => handleCompanyLogin(companyIdInput)}
-                disabled={isSeeding || !companyIdInput || (!isLocalMode && !authReady)}
+                disabled={isSeeding || !companyIdInput}
                 className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-[11px] hover:bg-emerald-500 hover:shadow-xl hover:shadow-emerald-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isSeeding ? (
@@ -5137,7 +5067,7 @@ Obrigado pela preferência!
                     <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                     Conectando...
                   </>
-                ) : (!isLocalMode && !authReady) ? "Iniciando SessÃ£o..." : "Sincronizar Cloud"}
+                ) : "Sincronizar Cloud"}
               </button>
 
               <div className="flex items-center gap-4 py-2">
@@ -5169,7 +5099,36 @@ Obrigado pela preferência!
   };
 
   const renderLogin = () => {
-    if (!enterpriseId) return renderCompanyLogin();
+    if (!authReady && !isLocalMode) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <motion.div 
+          animate={{ scale: [1, 1.1, 1], rotate: [0, 5, -5, 0] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="w-24 h-24 bg-indigo-600 rounded-[2.5rem] flex items-center justify-center mb-8 shadow-3xl shadow-indigo-500/20"
+        >
+          <ShieldCheck className="text-white w-12 h-12" />
+        </motion.div>
+        <h2 className="text-2xl font-black text-white tracking-tight mb-2">Validando Sessão Segura</h2>
+        <p className="text-slate-400 text-sm max-w-xs leading-relaxed">
+          Sincronizando protocolos de segurança e integridade com o motor universal...
+        </p>
+        {authError && (
+          <div className="mt-8 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl">
+             <p className="text-rose-400 text-xs font-bold">{authError}</p>
+             <button 
+                onClick={() => setIsLocalMode(true)}
+                className="mt-4 px-4 py-2 bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase"
+             >
+               Mudar para Modo Offline
+             </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!enterpriseId) return renderCompanyLogin();
     if (!isDeviceLinked) return renderDeviceLinking();
 
     return (
@@ -8025,10 +7984,7 @@ Obrigado pela preferência!
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updates } : o));
       meshNetwork.broadcast('order:update', { id: orderId, ...updates });
     } else {
-      await firebaseService.upsertOrderForTableAtomic({
-        ...order,
-        ...updates
-      });
+      await firebaseService.updateItem('orders', orderId, updates);
     }
   };
 
@@ -8829,4 +8785,3 @@ function LegendItem({ color, label }: any) {
     </div>
   );
 }
-

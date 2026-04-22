@@ -1,257 +1,116 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function authTenantId() {
-      return request.auth.token.companyId != null
-        ? request.auth.token.companyId
-        : request.auth.token.enterpriseId;
-    }
-
-    function isAdmin() {
-      return isSignedIn() &&
-        (
-          request.auth.token.role == 'dev' ||
-          request.auth.token.email == "novaapp26@gmail.com"
-        );
-    }
-
-    function isValidId(id) {
-      return id is string &&
-        id.size() > 0 &&
-        id.size() <= 128 &&
-        id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function hasTenantField(data) {
-      return data.keys().hasAny(['companyId', 'enterpriseId']);
-    }
-
-    function tenantMatches(data) {
-      return (
-        data.keys().hasAny(['companyId']) &&
-        data.companyId is string &&
-        data.companyId == authTenantId()
-      ) || (
-        data.keys().hasAny(['enterpriseId']) &&
-        data.enterpriseId is string &&
-        data.enterpriseId == authTenantId()
-      );
-    }
-
-    function canReadDoc() {
-      return isAdmin() ||
-        (isSignedIn() && hasTenantField(resource.data) && tenantMatches(resource.data));
-    }
-
-    function canCreateDoc() {
-      return isAdmin() ||
-        (isSignedIn() && hasTenantField(request.resource.data) && tenantMatches(request.resource.data));
-    }
-
-    function canUpdateDoc() {
-      return isAdmin() || (
-        isSignedIn() &&
-        hasTenantField(resource.data) &&
-        tenantMatches(resource.data) &&
-        hasTenantField(request.resource.data) &&
-        tenantMatches(request.resource.data)
-      );
-    }
-
-    function canDeleteDoc() {
-      return isAdmin() ||
-        (isSignedIn() && hasTenantField(resource.data) && tenantMatches(resource.data));
-    }
-
-    // Safety net
+    
+    // ======================================================
+    // 0. GLOBAL SAFETY NET
+    // ======================================================
     match /{document=**} {
       allow read, write: if false;
     }
 
-    match /masterKeys/{keyId} {
-      allow get, list: if isValidId(keyId) && (isAdmin() || isSignedIn());
-      allow create, delete: if isValidId(keyId) && isAdmin();
-      allow update: if isValidId(keyId) && (
-        isAdmin() ||
-        (
-          isSignedIn() &&
-          !resource.data.used &&
-          !resource.data.keys().hasAny(['revokedAt']) &&
-          request.resource.data.used == true &&
-          request.resource.data.key == resource.data.key &&
-          request.resource.data.createdAt == resource.data.createdAt
-        )
+    // ======================================================
+    // 1. SECURITY PRIMITIVES
+    // ======================================================
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function isOwner(entId) {
+      return isSignedIn() && 
+        get(/databases/$(database)/documents/enterprises/$(entId)).data.ownerId == request.auth.uid;
+    }
+    
+    function hasRole(entId, roles) {
+      // Identity lookup: Staff documents are keyed correctly in the db as {uid}_{entId}
+      let staffRef = /databases/$(database)/documents/staff/$(request.auth.uid + "_" + entId);
+      return isSignedIn() && (
+        isOwner(entId) || 
+        (exists(staffRef) && get(staffRef).data.role in roles)
       );
     }
 
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == "3eatcru@gmail.com"; 
+    }
+
+    // ======================================================
+    // 2. VALIDATION HELPERS
+    // ======================================================
+    
+    function isValidEnterprise(data) {
+      return data.keys().hasAll(['id', 'name', 'ownerId', 'createdAt']) &&
+             data.id is string &&
+             data.ownerId == request.auth.uid &&
+             data.createdAt == request.time;
+    }
+
+    function isValidStaff(data) {
+      return data.keys().hasAll(['id', 'enterpriseId', 'name', 'role', 'active']) &&
+             data.role in ['owner', 'manager', 'waiter', 'chef', 'regional_manager'];
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'enterpriseId', 'shopId', 'name', 'price', 'category', 'active']) &&
+             data.price is number && data.price >= 0;
+    }
+
+    // ======================================================
+    // 3. COLLECTION RULES
+    // ======================================================
+
     match /enterprises/{entId} {
-      allow read: if isAdmin() || (isSignedIn() && authTenantId() == entId);
-      allow create, update, delete: if isAdmin() || (isSignedIn() && authTenantId() == entId);
+      allow get: if isValidId(entId) && (isAdmin() || isOwner(entId));
+      allow create: if isValidId(entId) && isValidEnterprise(incoming());
+      allow update: if isValidId(entId) && isOwner(entId) && 
+                      incoming().ownerId == existing().ownerId &&
+                      incoming().createdAt == existing().createdAt;
     }
 
-    match /rolePermissions/{roleId} {
-      allow read: if isValidId(roleId) && canReadDoc();
-      allow create: if isValidId(roleId) && canCreateDoc();
-      allow update: if isValidId(roleId) && canUpdateDoc();
-      allow delete: if isValidId(roleId) && canDeleteDoc();
+    match /staff/{staffId} {
+      allow get: if isValidId(staffId) && (
+        isAdmin() || 
+        (isSignedIn() && hasRole(resource.data.enterpriseId, ['owner', 'manager'])) ||
+        (isSignedIn() && staffId.startsWith(request.auth.uid))
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || 
+        (resource.data.enterpriseId != null && hasRole(resource.data.enterpriseId, ['owner', 'manager']))
+      );
+      allow create: if isValidId(staffId) && isValidStaff(incoming()) && isOwner(incoming().enterpriseId);
+      allow update: if isValidId(staffId) && hasRole(existing().enterpriseId, ['owner', 'manager']) && 
+                      incoming().enterpriseId == existing().enterpriseId;
     }
 
-    match /shops/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
+    match /shops/{shopId} {
+      allow read: if isSignedIn() && resource.data.enterpriseId != null && hasRole(resource.data.enterpriseId, ['owner', 'manager', 'waiter', 'chef']);
+      allow create: if isValidId(shopId) && isOwner(incoming().enterpriseId);
+      allow update: if isValidId(shopId) && hasRole(existing().enterpriseId, ['owner', 'manager']);
     }
 
-    match /staff/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
+    match /products/{productId} {
+      allow read: if isSignedIn() && hasRole(resource.data.enterpriseId, ['owner', 'manager', 'waiter', 'chef']);
+      allow create: if isValidId(productId) && isValidProduct(incoming()) && hasRole(incoming().enterpriseId, ['owner', 'manager']);
+      allow update: if isValidId(productId) && hasRole(existing().enterpriseId, ['owner', 'manager']) && 
+                      incoming().enterpriseId == existing().enterpriseId;
     }
 
-    match /products/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && hasRole(resource.data.enterpriseId, ['owner', 'manager', 'waiter', 'chef']);
+      allow create: if isValidId(orderId) && hasRole(incoming().enterpriseId, ['owner', 'manager', 'waiter']);
+      allow update: if isValidId(orderId) && hasRole(existing().enterpriseId, ['owner', 'manager', 'waiter', 'chef']);
     }
 
-    match /orders/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
+    match /masterKeys/{keyId} {
+      allow get: if isValidId(keyId);
+      allow create: if isAdmin();
+      allow update: if isValidId(keyId) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt', 'enterpriseId', 'companyId', 'usedByDevice', 'updatedAt']) &&
+                      incoming().used == true &&
+                      existing().used == false;
     }
-
-    match /tables/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /inventory/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /backups/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /settings/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /shifts/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /reservations/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /printers/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /incidentReports/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /notifications/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /recountRequests/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /businessConfigs/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /staffSchedules/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /transactions/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /performance_events/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /suppliers/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /supplier_contracts/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /services/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
-
-    match /resources/{docId} {
-      allow read: if isValidId(docId) && canReadDoc();
-      allow create: if isValidId(docId) && canCreateDoc();
-      allow update: if isValidId(docId) && canUpdateDoc();
-      allow delete: if isValidId(docId) && canDeleteDoc();
-    }
+    
+    match /tables/{id} { allow read, write: if isSignedIn() && hasRole(resource.data.enterpriseId || incoming().enterpriseId, ['owner', 'manager', 'waiter']); }
   }
 }

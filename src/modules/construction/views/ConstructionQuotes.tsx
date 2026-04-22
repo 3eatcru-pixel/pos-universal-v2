@@ -19,8 +19,9 @@ import {
   Package,
   Printer
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
+import { paymentService } from '../../../services/paymentService';
 import { Quote, constructionService, Customer, ConstructionMaterial } from '../services/constructionService';
 
 export const ConstructionQuotes: React.FC = () => {
@@ -211,7 +212,15 @@ export const ConstructionQuotes: React.FC = () => {
                             )}
                             {quote.status === 'approved' && (
                                <button 
-                                 onClick={() => alert(`Pagamento de ${formatCurrency(quote.total)} recebido com sucesso!`)}
+                                 onClick={async () => {
+                                   try {
+                                     await paymentService.processPayment({ amount: quote.total, method: 'other', module: 'construction', orderId: quote.id });
+                                     setQuotes(quotes.map(q => q.id === quote.id ? { ...q, status: 'paid' } : q));
+                                     alert(`Pagamento de ${formatCurrency(quote.total)} recebido com sucesso!`);
+                                   } catch (err) {
+                                     alert('Erro ao processar pagamento');
+                                   }
+                                 }}
                                  className="p-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 flex items-center gap-1 text-[9px] font-black uppercase tracking-widest"
                                >
                                  <DollarSign className="w-3 h-3" /> Pagar

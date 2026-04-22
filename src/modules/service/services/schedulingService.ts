@@ -1,22 +1,6 @@
 import { ServiceAppointment, AppointmentStatus } from '../types';
 import { meshNetwork } from '../../../services/p2pSync';
 
-function resolveEnterpriseId(): string {
-  try {
-    const currentUser = localStorage.getItem('pos_current_user')
-      ? JSON.parse(localStorage.getItem('pos_current_user')!)
-      : null;
-    return (
-      currentUser?.companyId ||
-      currentUser?.enterpriseId ||
-      localStorage.getItem('rm_enterprise_id') ||
-      'demo-enterprise'
-    );
-  } catch {
-    return localStorage.getItem('rm_enterprise_id') || 'demo-enterprise';
-  }
-}
-
 class SchedulingService {
   private appointments: ServiceAppointment[] = [];
 
@@ -37,7 +21,12 @@ class SchedulingService {
   }
 
   private seedDemoData() {
-    const entId = resolveEnterpriseId();
+    const companyStr = localStorage.getItem('pos_companies');
+    let entId = 'demo-enterprise';
+    if (companyStr) {
+      const companies = JSON.parse(companyStr);
+      if (companies.length > 0) entId = companies[0].id;
+    }
 
     const today = new Date();
     today.setHours(9, 0, 0, 0); // start at 9:00 AM

@@ -12,7 +12,7 @@ import {
   Star,
   Search
 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { cn } from '../../../lib/utils';
 
 interface Staff {

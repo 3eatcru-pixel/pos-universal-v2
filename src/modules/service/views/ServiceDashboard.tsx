@@ -11,7 +11,7 @@ import {
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { 
   BarChart, 

@@ -36,7 +36,13 @@ export const MOCK_SCHEDULES: StaffSchedule[] = [
 export const MOCK_ENTERPRISE: Enterprise = {
   id: 'ent-1',
   name: 'Grupo RestManager',
+  ownerId: 'u1',
+  businessType: 'restaurant',
+  ownerEmail: 'owner@ent1.com',
+  accessCode: 'ENT1-1234',
+  status: 'active',
   owners: ['u1'], // Ricardo Dono
+  createdAt: Date.now(),
   regions: [
     { id: 'reg-sp-centro', name: 'São Paulo - Centro', enterpriseId: 'ent-1', managerIds: ['m3'], shops: [] }
   ]
