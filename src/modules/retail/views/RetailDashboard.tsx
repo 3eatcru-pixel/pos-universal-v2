@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   TrendingUp, 
   Users, 
@@ -9,12 +9,137 @@ import {
   ShoppingBag,
   Star,
   Clock,
-  ArrowDownRight
+  ArrowDownRight,
+  Wifi,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { formatCurrency } from '../../../lib/utils';
+import { saleRepository } from '../../../core/storage/repositories/saleRepository';
+import { productRepository } from '../../../core/storage/repositories/productRepository';
+import { retailService, RetailSyncHistoryEvent, RetailSyncStatus } from '../services/retailService';
+
+interface RetailRealtimeMetrics {
+  salesTodayTotal: number;
+  salesTodayCount: number;
+  averageTicket: number;
+  lowStockCount: number;
+}
 
 export const RetailDashboard: React.FC = () => {
+  const [syncFilter, setSyncFilter] = useState<'ALL' | RetailSyncHistoryEvent['type']>('ALL');
+  const [metrics, setMetrics] = useState<RetailRealtimeMetrics>({
+    salesTodayTotal: 0,
+    salesTodayCount: 0,
+    averageTicket: 0,
+    lowStockCount: 0,
+  });
+  const [syncStatus, setSyncStatus] = useState<RetailSyncStatus>({
+    connected: false,
+    pendingCount: 0,
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    isRetrying: false,
+    resentInSession: 0,
+    recentEvents: [],
+  });
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+  const [isClearingHistory, setIsClearingHistory] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadMetrics = async () => {
+      const [sales, products] = await Promise.all([
+        saleRepository.findAll(),
+        productRepository.findAll(),
+      ]);
+
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+
+      const salesToday = sales.filter((sale) => {
+        const timestamp = Date.parse(sale.createdAt);
+        return Number.isFinite(timestamp) && timestamp >= startOfDay;
+      });
+
+      const salesTodayTotal = salesToday.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+      const salesTodayCount = salesToday.length;
+      const averageTicket = salesTodayCount > 0 ? salesTodayTotal / salesTodayCount : 0;
+      const lowStockCount = products.filter((product) => Number(product.stock || 0) <= 5).length;
+
+      if (isMounted) {
+        setMetrics({
+          salesTodayTotal,
+          salesTodayCount,
+          averageTicket,
+          lowStockCount,
+        });
+      }
+    };
+
+    const loadSyncStatus = async () => {
+      const status = await retailService.getSyncQueueStatus();
+      if (isMounted) {
+        setSyncStatus(status);
+      }
+    };
+
+    const onSaleUpdated = () => {
+      void loadMetrics();
+      void loadSyncStatus();
+    };
+
+    const onSyncStatus = (event: Event) => {
+      const detail = (event as CustomEvent<RetailSyncStatus>).detail;
+      if (!isMounted || !detail) return;
+      setSyncStatus(detail);
+    };
+
+    void loadMetrics();
+    void loadSyncStatus();
+    window.addEventListener('retail:sale-updated', onSaleUpdated);
+    window.addEventListener('retail:sync-status', onSyncStatus as EventListener);
+    const syncPolling = window.setInterval(() => {
+      void loadSyncStatus();
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('retail:sale-updated', onSaleUpdated);
+      window.removeEventListener('retail:sync-status', onSyncStatus as EventListener);
+      window.clearInterval(syncPolling);
+    };
+  }, []);
+
+  const handleManualSync = async () => {
+    if (isManualSyncing) return;
+    setIsManualSyncing(true);
+    try {
+      const status = await retailService.syncNow();
+      setSyncStatus(status);
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
+
+  const handleClearSyncHistory = async () => {
+    if (isClearingHistory) return;
+    setIsClearingHistory(true);
+    try {
+      const status = await retailService.clearSyncHistory();
+      setSyncStatus(status);
+    } finally {
+      setIsClearingHistory(false);
+    }
+  };
+
+  const filteredSyncEvents =
+    syncFilter === 'ALL'
+      ? syncStatus.recentEvents
+      : syncStatus.recentEvents.filter((event) => event.type === syncFilter);
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -34,10 +159,10 @@ export const RetailDashboard: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Vendas Hoje', value: formatCurrency(4250.80), change: '+12%', trend: 'up', icon: <TrendingUp />, color: 'bg-emerald-50 text-emerald-600' },
+          { label: 'Vendas Hoje', value: formatCurrency(metrics.salesTodayTotal), change: `${metrics.salesTodayCount} vendas`, trend: 'up', icon: <TrendingUp />, color: 'bg-emerald-50 text-emerald-600' },
           { label: 'Novos Clientes', value: '14', change: '+2', trend: 'up', icon: <Users />, color: 'bg-blue-50 text-blue-600' },
-          { label: 'Ticket Médio', value: formatCurrency(142.00), change: '-5%', trend: 'down', icon: <CreditCard />, color: 'bg-indigo-50 text-indigo-600' },
-          { label: 'Itens em Falta', value: '08', change: 'Crítico', trend: 'down', icon: <Package />, color: 'bg-rose-50 text-rose-600' },
+          { label: 'Ticket Médio', value: formatCurrency(metrics.averageTicket), change: metrics.salesTodayCount > 0 ? 'Atualizado' : 'Sem vendas', trend: metrics.salesTodayCount > 0 ? 'up' : 'down', icon: <CreditCard />, color: 'bg-indigo-50 text-indigo-600' },
+          { label: 'Itens em Falta', value: String(metrics.lowStockCount).padStart(2, '0'), change: metrics.lowStockCount > 0 ? 'Crítico' : 'Estável', trend: metrics.lowStockCount > 0 ? 'down' : 'up', icon: <Package />, color: 'bg-rose-50 text-rose-600' },
         ].map((stat, i) => (
           <div key={i} className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm relative overflow-hidden group">
             <div className={`p-4 rounded-2xl ${stat.color} w-fit mb-6 shadow-sm group-hover:scale-110 transition-transform duration-500`}>
@@ -53,6 +178,101 @@ export const RetailDashboard: React.FC = () => {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm p-8">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${syncStatus.connected ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+              {syncStatus.connected ? <Wifi className="w-6 h-6" /> : <WifiOff className="w-6 h-6" />}
+            </div>
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Sync em Tempo Real</p>
+              <p className="text-xl font-black text-slate-800 uppercase tracking-tight">
+                {syncStatus.connected ? 'Malha Online' : 'Malha Offline'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-slate-50 rounded-2xl px-5 py-4">
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Fila Pendente</p>
+              <p className="text-2xl font-black text-slate-800">{syncStatus.pendingCount}</p>
+            </div>
+            <div className="bg-slate-50 rounded-2xl px-5 py-4">
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Última Tentativa</p>
+              <p className="text-sm font-black text-slate-800">
+                {syncStatus.lastAttemptAt ? new Date(syncStatus.lastAttemptAt).toLocaleTimeString('pt-BR') : '--:--:--'}
+              </p>
+            </div>
+            <div className="bg-slate-50 rounded-2xl px-5 py-4">
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Último Sucesso</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-black text-slate-800">
+                  {syncStatus.lastSuccessAt ? new Date(syncStatus.lastSuccessAt).toLocaleTimeString('pt-BR') : '--:--:--'}
+                </p>
+                {syncStatus.isRetrying && <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin" />}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <p className="text-xs font-black uppercase tracking-widest text-slate-500">
+            Reenvios na sessão: {syncStatus.resentInSession}
+          </p>
+          <button
+            onClick={() => void handleManualSync()}
+            disabled={isManualSyncing || syncStatus.isRetrying}
+            className="px-6 py-3 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-indigo-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${(isManualSyncing || syncStatus.isRetrying) ? 'animate-spin' : ''}`} />
+            Sincronizar Agora
+          </button>
+        </div>
+        <div className="mt-6 bg-slate-50 rounded-2xl p-4 border border-slate-100">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Últimos Eventos de Sync</p>
+            <div className="flex items-center gap-2">
+              <select
+                value={syncFilter}
+                onChange={(event) => setSyncFilter(event.target.value as 'ALL' | RetailSyncHistoryEvent['type'])}
+                className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-600"
+              >
+                <option value="ALL">Todos</option>
+                <option value="SEND">Send</option>
+                <option value="RECEIVE">Receive</option>
+                <option value="DUPLICATE">Duplicate</option>
+                <option value="RETRY">Retry</option>
+                <option value="MANUAL_SYNC">Manual Sync</option>
+              </select>
+              <button
+                onClick={() => void handleClearSyncHistory()}
+                disabled={isClearingHistory || syncStatus.recentEvents.length === 0}
+                className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-slate-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Limpar Histórico
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {filteredSyncEvents.length === 0 ? (
+              <p className="text-xs font-bold text-slate-400">Nenhum evento de sincronização ainda.</p>
+            ) : (
+              filteredSyncEvents.map((event) => (
+                <div key={event.id} className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">{event.type}</span>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${event.status === 'success' ? 'text-emerald-600 bg-emerald-50' : event.status === 'ignored' ? 'text-amber-600 bg-amber-50' : 'text-slate-600 bg-slate-100'}`}>{event.status}</span>
+                    <span className="text-xs font-bold text-slate-600">{event.message}</span>
+                  </div>
+                  <span className="text-[10px] font-black text-slate-400">
+                    {new Date(event.timestamp).toLocaleTimeString('pt-BR')}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

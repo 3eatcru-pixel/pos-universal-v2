@@ -5,7 +5,7 @@
 export type BusinessMode = 'restaurant' | 'construction' | 'retail' | 'market' | 'generic' | 'service';
 export type DeviceRole = 'host' | 'client';
 export type DeviceMode = 'cashier' | 'salesperson' | 'stock' | 'admin' | 'logistics' | 'retail_sales' | 'retail_cashier' | 'market_pos' | 'market_scanner' | 'central_server';
-export type UserRole = 'dev' | 'owner' | 'manager' | 'operator';
+export type UserRole = 'dev' | 'owner' | 'manager' | 'staff' | 'operator';
 export type SyncMode = 'p2p' | 'host_server' | 'cloud';
 
 export interface ServerNode {
@@ -78,7 +78,7 @@ export interface AppNotification {
 export interface Employee {
   id: string;
   name: string;
-  role: 'manager' | 'operator';
+  role: 'manager' | 'staff' | 'operator';
   companyId: string;
   deviceId?: string;
   joinedAt: number;

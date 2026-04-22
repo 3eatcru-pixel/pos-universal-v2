@@ -129,7 +129,6 @@ import {
   Shop,
   Region,
   Enterprise,
-  MasterKey,
   SystemMode,
   BusinessConfig,
   StaffSchedule,
@@ -142,7 +141,9 @@ import { printerService } from './services/printerService';
 import { firebaseService } from './services/firebaseService';
 import { paymentService } from './services/paymentService';
 import { db } from './firebase';
-import { canAccessTenant, ensureFirebaseSession } from './services/authSession';
+import { ensureFirebaseSession } from './services/authSession';
+import { accountService } from './core/services/accountService';
+import { LoginView } from './core/views/LoginView';
 
 // --- State Management ---
 
@@ -151,7 +152,7 @@ import { dbLocal } from './services/db';
 
 export default function App() {
   const [enterpriseId, setEnterpriseId] = useState<string | null>(() => {
-    return localStorage.getItem('rm_enterprise_id');
+    return accountService.getCurrentCompanyId() || localStorage.getItem('rm_enterprise_id');
   });
   const [systemMode, setSystemMode] = useState<SystemMode>(() => {
     return (localStorage.getItem('rm_system_mode') as SystemMode) || 'restaurant';
@@ -168,11 +169,30 @@ export default function App() {
     return localStorage.getItem('rm_selected_shop_id');
   });
 
-  const [companyIdInput, setCompanyIdInput] = useState('');
-  const [pinInput, setPinInput] = useState('');
-  const [currentUser, setCurrentUser] = useState<Staff | null>(null);
-  const [lastStaffId, setLastStaffId] = useState<string | null>(() => {
-    return localStorage.getItem('rm_last_staff_id');
+  const [currentUser, setCurrentUser] = useState<Staff | null>(() => {
+    const globalUser = accountService.getCurrentUser();
+    if (!globalUser) return null;
+
+    const mappedRole =
+      globalUser.role === 'owner'
+        ? 'owner'
+        : globalUser.role === 'manager'
+          ? 'manager_foh'
+          : globalUser.role === 'dev'
+            ? 'admin'
+            : 'waiter';
+
+    return {
+      id: globalUser.id,
+      enterpriseId: globalUser.companyId,
+      companyId: globalUser.companyId,
+      name: globalUser.name,
+      role: mappedRole,
+      active: true,
+      pin: globalUser.pin || '0000',
+      assignedShopIds: [],
+      email: globalUser.email,
+    } as Staff;
   });
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [selectedArea, setSelectedArea] = useState<string>('Salão Principal');
@@ -182,9 +202,6 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [masterKeys, setMasterKeys] = useState<MasterKey[]>([]);
-  const [isDevMode, setIsDevMode] = useState(false);
-  const [devClicks, setDevClicks] = useState(0);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [printers, setPrinters] = useState<Printer[]>([]);
@@ -245,12 +262,17 @@ export default function App() {
     return () => window.removeEventListener('cash-register-open', handleCashRegister);
   }, []);
 
+  useEffect(() => {
+    if (!currentUser?.enterpriseId) return;
+    if (enterpriseId === currentUser.enterpriseId) return;
+    setEnterpriseId(currentUser.enterpriseId);
+  }, [currentUser, enterpriseId]);
+
   // Sync Logic
   useEffect(() => {
     if (!authReady && !isLocalMode) return;
     // These collections should be subscribed to globally, regardless of enterpriseId
     const globalUnsubs = [
-      firebaseService.subscribeCollection('masterKeys', null, null, setMasterKeys),
       firebaseService.subscribeCollection('enterprises', null, null, setEnterprises),
       firebaseService.subscribeCollection('rolePermissions', null, null, setRolePermissions),
     ];
@@ -323,6 +345,24 @@ export default function App() {
        });
     }
   }, [staff, shops, enterprises]);
+
+  useEffect(() => {
+    if (!enterpriseId || staff.length === 0) return;
+    try {
+      accountService.migrateRestaurantUsers(
+        enterpriseId,
+        staff.map((member) => ({
+          id: member.id,
+          name: member.name,
+          role: String(member.role || ''),
+          pin: member.pin,
+          email: member.email,
+        }))
+      );
+    } catch (error) {
+      console.warn('Falha ao migrar staff legado para auth global', error);
+    }
+  }, [enterpriseId, staff]);
 
   useEffect(() => {
     if (enterpriseId) localStorage.setItem('rm_enterprise_id', enterpriseId);
@@ -488,69 +528,9 @@ export default function App() {
 
 
   const handleLogout = () => {
+    accountService.logout();
     setCurrentUser(null);
     setCurrentView('dashboard');
-    localStorage.removeItem('rm_staff_member');
-  };
-
-  const handleFullLogout = () => {
-    if (!confirm("⚠️ Isso desconectará a empresa deste dispositivo. Todos os dados locais serão limpos. Continuar?")) return;
-    setEnterpriseId(null);
-    setSelectedShopId(null);
-    setCurrentUser(null);
-    setIsLocalMode(false);
-    localStorage.removeItem('rm_enterprise_id');
-    localStorage.removeItem('rm_selected_shop_id');
-    localStorage.removeItem('rm_local_mode');
-    window.location.reload();
-  };
-
-  const [isSeeding, setIsSeeding] = useState(false);
-
-  const handleCompanyLogin = async (id: string) => {
-    if (!id.trim()) return;
-    setIsSeeding(true);
-    try {
-      await ensureFirebaseSession();
-      const canAccess = await canAccessTenant(id);
-      if (!canAccess) {
-        alert("Sua sessão atual não possui claim de acesso para esta empresa. Solicite vinculação de tenant (companyId) no token.");
-        setIsSeeding(false);
-        return;
-      }
-      const existingShops = await firebaseService.getAllDocs('shops', id);
-      if (existingShops.length === 0) {
-        if (confirm("Identificador de empresa não encontrado. Gostaria de criar uma conta DEMO com este ID agora?")) {
-           const enterpriseData = {
-              ...MOCK_ENTERPRISE,
-              id,
-              name: `Empresa ${id}`
-           };
-           
-           await firebaseService.saveItem('enterprises', id, enterpriseData);
-           await firebaseService.seedData({
-             shops: MOCK_SHOPS.map(s => ({ ...s, id: `${id}-${s.id}`, enterpriseId: id })),
-             staff: MOCK_STAFF.map(s => ({ ...s, id: `${id}-${s.id}`, enterpriseId: id })),
-             products: MOCK_PRODUCTS.map(p => ({ ...p, id: `${id}-${p.id}`, enterpriseId: id })),
-             tables: MOCK_TABLES.map(t => ({ ...t, id: `${id}-${t.id}`, enterpriseId: id })),
-             orders: MOCK_ORDERS.map(o => ({ ...o, id: `${id}-${o.id}`, enterpriseId: id })),
-             inventory: MOCK_INVENTORY.map(i => ({ ...i, id: `${id}-${i.id}`, enterpriseId: id })),
-             permissions: MOCK_PERMISSIONS,
-             printers: MOCK_PRINTERS.map(p => ({ ...p, id: `${id}-${p.id}`, enterpriseId: id }))
-           });
-           alert("Conta demo criada e carregada com sucesso!");
-        } else {
-          setIsSeeding(false);
-          return;
-        }
-      }
-      setEnterpriseId(id);
-    } catch (e) {
-      console.error(e);
-      alert("Erro ao conectar empresa.");
-    } finally {
-      setIsSeeding(false);
-    }
   };
 
   const handleAddArea = () => {
@@ -560,173 +540,6 @@ export default function App() {
       setSelectedArea(areaName);
       alert(`Ambiente "${areaName}" criado! Agora você pode adicionar mesas nesta área.`);
     }
-  };
-
-  const handleGenerateMasterKey = async () => {
-    const keyStr = Math.random().toString(36).substring(2, 10).toUpperCase();
-    const id = `mk-${Date.now()}`;
-    const newKey = {
-      id,
-      key: `RM-MASTER-${keyStr}`,
-      used: false,
-      createdAt: Date.now()
-    };
-    await firebaseService.saveItem('masterKeys', id, newKey);
-  };
-
-  const handleGenerateBatchKeys = async (count: number = 5) => {
-    for (let i = 0; i < count; i++) {
-      const keyStr = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const id = `mk-${Date.now()}-${i}`;
-      const newKey = {
-        id,
-        key: `RM-BATCH-${keyStr}`,
-        used: false,
-        createdAt: Date.now()
-      };
-      await firebaseService.saveItem('masterKeys', id, newKey);
-    }
-  };
-
-  const renderDeveloperPanel = () => {
-    return (
-      <div className="fixed inset-0 z-[300] bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-4">
-        <motion.div 
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-[3rem] shadow-2xl p-10 max-h-[90vh] overflow-y-auto text-slate-300"
-        >
-           <div className="flex items-center justify-between mb-10">
-              <div className="flex items-center gap-4">
-                 <div className="w-14 h-14 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                   <Terminal className="w-8 h-8 text-white" />
-                 </div>
-                 <div>
-                   <h2 className="text-2xl font-black text-white tracking-widest uppercase">Protocolo de Controle</h2>
-                   <p className="text-xs font-bold text-slate-500 uppercase tracking-[0.2em]">Matrix Global: Master Keys & Empresas</p>
-                 </div>
-              </div>
-              <button 
-                onClick={() => setIsDevMode(false)}
-                className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center hover:bg-rose-500 hover:text-white transition-all text-slate-500"
-              >
-                <X className="w-6 h-6" />
-              </button>
-           </div>
-
-           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-              <div className="space-y-6">
-                 <div className="flex items-center justify-between px-2">
-                    <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Master Keys de Ativação</h3>
-                    <div className="flex gap-2">
-                       <button 
-                         onClick={handleGenerateMasterKey}
-                         className="px-4 py-2 bg-emerald-500 text-white text-[9px] font-black rounded-xl hover:bg-emerald-400 transition-all uppercase tracking-widest"
-                       >
-                         Gerar Única
-                       </button>
-                       <button 
-                         onClick={() => handleGenerateBatchKeys(5)}
-                         className="px-4 py-2 bg-slate-800 text-white text-[9px] font-black rounded-xl hover:bg-slate-700 transition-all uppercase tracking-widest"
-                       >
-                         Lote (5x)
-                       </button>
-                    </div>
-                 </div>
-                 
-                 <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                    {masterKeys.length === 0 && <p className="text-xs text-slate-600 text-center py-10">Nenhuma chave gerada.</p>}
-                    {masterKeys.sort((a, b) => b.createdAt - a.createdAt).map(key => (
-                      <div key={key.id} className={cn(
-                        "flex items-center justify-between p-4 rounded-2xl border transition-all",
-                        key.used ? "bg-slate-800/20 border-slate-800" : "bg-slate-800 border-slate-700 hover:border-emerald-500/50"
-                      )}>
-                        <div className="flex items-center gap-3">
-                           <div className={cn("p-2 rounded-lg", key.used ? "bg-slate-900" : "bg-emerald-500/10")}>
-                             <Key className={cn("w-4 h-4", key.used ? "text-slate-600" : "text-emerald-500")} />
-                           </div>
-                           <div>
-                              <p className="font-mono font-black text-sm tracking-widest">{key.key}</p>
-                              <p className="text-[8px] text-slate-500 font-bold uppercase mt-1">
-                                {key.used ? `Link: ${key.enterpriseId || key.usedBy}` : `Criada: ${format(key.createdAt, 'dd/MM/yy HH:mm')}`}
-                              </p>
-                           </div>
-                        </div>
-                        <div className="flex gap-2">
-                           <button 
-                             onClick={() => {
-                               navigator.clipboard.writeText(key.key);
-                               alert("Copiada!");
-                             }}
-                             className="p-2 bg-slate-900 rounded-lg text-slate-400 hover:text-emerald-400 transition-all"
-                           >
-                             <Copy className="w-3.5 h-3.5" />
-                           </button>
-                           <button 
-                             onClick={async () => {
-                               if (confirm("Deletar permanentemente?")) {
-                                 await firebaseService.deleteItem('masterKeys', key.id);
-                               }
-                             }}
-                             className="p-2 bg-slate-900 rounded-lg text-slate-700 hover:text-rose-500 transition-all"
-                           >
-                             <Trash2 className="w-3.5 h-3.5" />
-                           </button>
-                        </div>
-                      </div>
-                    ))}
-                 </div>
-              </div>
-
-              <div className="space-y-6">
-                 <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400 px-2">Empresas Cloud</h3>
-                 <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar text-white">
-                    {enterprises.length === 0 && <p className="text-xs text-slate-600 text-center py-10 uppercase font-black">Nenhuma empresa registrada.</p>}
-                    {enterprises.map(ent => (
-                      <div key={ent.id} className="bg-slate-800 p-4 rounded-2xl border border-slate-700 flex items-center justify-between">
-                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500">
-                              <Building2 className="w-5 h-5" />
-                            </div>
-                            <div>
-                               <p className="font-bold text-sm">{ent.name}</p>
-                               <p className="text-[9px] text-slate-500 font-mono tracking-tighter">ID: {ent.id}</p>
-                            </div>
-                         </div>
-                         <button 
-                           onClick={() => {
-                             setEnterpriseId(ent.id);
-                             setIsDevMode(false);
-                           }}
-                           className="px-3 py-1.5 bg-slate-900 text-slate-400 text-[8px] font-black rounded-lg hover:text-white transition-all uppercase tracking-widest border border-slate-800"
-                         >
-                           Conectar
-                         </button>
-                      </div>
-                    ))}
-                 </div>
-
-                 <div className="grid grid-cols-1 gap-3 pt-6 border-t border-slate-800">
-                    <button 
-                      onClick={() => {
-                        if (confirm("ISSO APAGARÁ TODAS AS LICENÇAS DO BANCO DE DADOS GLOBAL. Deseja continuar?")) {
-                          masterKeys.forEach(k => firebaseService.deleteItem('masterKeys', k.id));
-                        }
-                      }}
-                      className="w-full py-4 bg-rose-500/10 text-rose-500 text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-rose-500 hover:text-white transition-all"
-                    >
-                      Hard Reset: Master Keys
-                    </button>
-                    <div className="p-4 bg-amber-500/10 rounded-2xl flex items-center gap-4">
-                       <AlertTriangle className="w-6 h-6 text-amber-500" />
-                       <p className="text-[9px] text-amber-500/80 font-black uppercase leading-relaxed tracking-tight">O protocolo autoritário ignora links de empresa. Alocações expiradas são recicladas automaticamente.</p>
-                    </div>
-                 </div>
-              </div>
-           </div>
-        </motion.div>
-      </div>
-    );
   };
 
   const accessibleShopIds = useMemo(() => {
@@ -907,19 +720,6 @@ export default function App() {
   const STANDARD_ALLERGIES = [
     'Amendoim', 'Glúten', 'Lactose', 'Frutos do Mar', 'Ovo', 'Soja', 'Nozes', 'Peixe', 'Trigo', 'Leite', 'Castanhas'
   ];
-
-  // Create Owner Modal State
-  const [isCreateOwnerModalOpen, setIsCreateOwnerModalOpen] = useState(false);
-  const [ownerCreationData, setOwnerCreationData] = useState({ 
-    masterKey: '',
-    name: '', 
-    email: '',
-    password: '',
-    pin: '', 
-    companyName: '',
-    taxId: '', // CNPJ ou CPF
-    locations: [''] // Array de locais (lojas)
-  });
 
   // Safety Checklist State
   const [safetyLogs, setSafetyLogs] = useState<Record<string, Record<string, boolean>>>({}); // dateStr -> itemId -> status
@@ -1656,154 +1456,6 @@ Obrigado pela preferência!
     }
     setIsReservationModalOpen(false);
     setEditingReservation(null);
-  };
-
-  const handleCreateOwner = async () => {
-    // Verificar se a chave existe e não foi usada
-    const validKey = masterKeys.find(k => k.key === ownerCreationData.masterKey && !k.used);
-
-    if (!validKey) {
-      alert('Chave Mestra inválida ou já utilizada!');
-      return;
-    }
-
-    if (!ownerCreationData.name || ownerCreationData.pin.length !== 4 || !ownerCreationData.password) {
-      alert('Preencha os campos obrigatórios (Nome, Senha e PIN de 4 dígitos)');
-      return;
-    }
-
-    const ownerId = 'owner-' + Date.now();
-    // Usar a chave ou parte dela como enterpriseId ou pedir pro dono criar (vamos usar o id da empresa que ele quer)
-    const enterpriseIdForNewAccount = ownerCreationData.companyName.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substring(2, 5);
-    
-    // 1. Criar Lojas baseadas nos locais informados
-    const shopIds: string[] = [];
-    for (const loc of ownerCreationData.locations) {
-      if (!loc.trim()) continue;
-      const shopId = 'shop-' + Math.random().toString(36).substr(2, 9);
-      const newShop: Shop = {
-        id: shopId,
-        enterpriseId: enterpriseIdForNewAccount,
-        name: ownerCreationData.companyName + ' - ' + loc,
-        regionId: 'default',
-        settings: { name: ownerCreationData.companyName }
-      };
-      await firebaseService.saveItem('shops', shopId, newShop);
-      
-      // Adicionar mesas padrão (40 mesas total, 20 por salão) para cada loja criada
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-p${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i,
-          status: 'free',
-          capacity: i <= 8 ? 2 : 4,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Salão Principal'
-        });
-      }
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-v${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i + 20,
-          status: 'free',
-          capacity: 2,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Varanda Gourmet'
-        });
-      }
-
-      shopIds.push(shopId);
-    }
-
-    // Se nenhum local foi preenchido, cria pelo menos uma loja padrão
-    if (shopIds.length === 0) {
-      const shopId = 'shop-1';
-      await firebaseService.saveItem('shops', shopId, {
-        id: shopId,
-        enterpriseId: enterpriseIdForNewAccount,
-        name: ownerCreationData.companyName || 'Minha Loja',
-        regionId: 'default',
-        settings: { name: ownerCreationData.companyName || 'Minha Loja' }
-      });
-
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-p${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i,
-          status: 'free',
-          capacity: i <= 8 ? 2 : 4,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Salão Principal'
-        });
-      }
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-v${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i + 20,
-          status: 'free',
-          capacity: 2,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Varanda Gourmet'
-        });
-      }
-      shopIds.push(shopId);
-    }
-
-    if (ownerCreationData.companyName) {
-      await firebaseService.saveItem('settings', 'company', { 
-        name: ownerCreationData.companyName,
-        cnpj: ownerCreationData.taxId,
-        recoveryEmail: ownerCreationData.email,
-        shopPassword: ownerCreationData.password 
-      } as any);
-    }
-
-    const newOwner: Staff = {
-      id: ownerId,
-      enterpriseId: enterpriseIdForNewAccount,
-      name: ownerCreationData.name,
-      role: 'owner',
-      active: true,
-      pin: ownerCreationData.pin,
-      assignedShopIds: shopIds,
-      email: ownerCreationData.email,
-      phone: ownerCreationData.taxId 
-    } as any;
-
-    await firebaseService.saveItem('staff', ownerId, newOwner);
-    
-    // Marcar chave como usada
-    await firebaseService.updateItem('masterKeys', validKey.id, {
-      used: true,
-      usedBy: ownerId,
-      enterpriseId: enterpriseIdForNewAccount
-    });
-    
-    setIsCreateOwnerModalOpen(false);
-    setOwnerCreationData({ 
-      masterKey: '',
-      name: '', 
-      email: '',
-      password: '',
-      pin: '', 
-      companyName: '',
-      taxId: '',
-      locations: ['']
-    });
-    setEnterpriseId(enterpriseIdForNewAccount);
-    alert('Conta criada com sucesso! Você já está conectado à sua nova empresa. Use seu PIN para entrar no sistema.');
   };
 
   const handleCreateIncident = () => {
@@ -4793,165 +4445,6 @@ Obrigado pela preferência!
     );
   };
 
-  const renderCreateOwnerModal = () => {
-    if (!isCreateOwnerModalOpen) return null;
-    return (
-      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4 overflow-y-auto">
-        <motion.div 
-          initial={{ opacity: 0, translateY: 20 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          className="bg-white rounded-[2.5rem] w-full max-w-2xl shadow-2xl p-6 md:p-10 my-8"
-        >
-          <div className="flex justify-between items-center mb-8">
-            <div>
-              <h2 className="text-2xl font-black text-slate-800 tracking-tight uppercase">Configurar Novo Dono</h2>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Insira os dados da empresa e chave mestra</p>
-            </div>
-            <button onClick={() => setIsCreateOwnerModalOpen(false)} className="bg-slate-50 p-3 rounded-2xl text-slate-400 hover:text-rose-500 transition-all">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-5">
-              <div className="bg-emerald-50 p-5 rounded-[2rem] border border-emerald-100 mb-2">
-                <label className="text-[10px] font-black uppercase text-emerald-600 mb-2 block tracking-widest">Chave Mestra de Ativação</label>
-                <div className="relative">
-                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />
-                  <input 
-                    type="password" 
-                    value={ownerCreationData.masterKey}
-                    onChange={e => setOwnerCreationData({...ownerCreationData, masterKey: e.target.value})}
-                    className="w-full bg-white border-2 border-emerald-100 rounded-2xl pl-11 pr-4 py-3 font-black text-emerald-700 placeholder:text-emerald-200 outline-none focus:border-emerald-500 transition-all"
-                    placeholder="code-XX"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest ml-1">Nome Completo do Dono</label>
-                <input 
-                  type="text" 
-                  value={ownerCreationData.name}
-                  onChange={e => setOwnerCreationData({...ownerCreationData, name: e.target.value})}
-                  className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl p-4 font-bold text-slate-700 focus:bg-white focus:border-emerald-500 outline-none transition-all"
-                  placeholder="Seu nome"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest ml-1">CNPJ ou CPF (Opcional)</label>
-                <input 
-                  type="text" 
-                  value={ownerCreationData.taxId}
-                  onChange={e => setOwnerCreationData({...ownerCreationData, taxId: e.target.value})}
-                  className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl p-4 font-bold text-slate-700 focus:bg-white focus:border-emerald-500 outline-none transition-all"
-                  placeholder="00.000.000/0001-00"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest ml-1">E-mail de Recuperação</label>
-                <input 
-                  type="email" 
-                  value={ownerCreationData.email}
-                  onChange={e => setOwnerCreationData({...ownerCreationData, email: e.target.value})}
-                  className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl p-4 font-bold text-slate-700 focus:bg-white focus:border-emerald-500 outline-none transition-all"
-                  placeholder="seu@email.com"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-5">
-              <div>
-                <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest ml-1">Nome da Loja (Empresa)</label>
-                <input 
-                  type="text" 
-                  value={ownerCreationData.companyName}
-                  onChange={e => setOwnerCreationData({...ownerCreationData, companyName: e.target.value})}
-                  className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl p-4 font-bold text-slate-700 focus:bg-white focus:border-emerald-500 outline-none transition-all"
-                  placeholder="Ex: Restaurante Central"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest ml-1">Locais / Unidades</label>
-                  <button 
-                    onClick={() => setOwnerCreationData({...ownerCreationData, locations: [...ownerCreationData.locations, '']})}
-                    className="text-[10px] font-black text-emerald-600 uppercase hover:underline"
-                  >
-                    + Adicionar Local
-                  </button>
-                </div>
-                <div className="space-y-2 max-h-[120px] overflow-y-auto pr-2 custom-scrollbar">
-                  {ownerCreationData.locations.map((loc, idx) => (
-                    <div key={idx} className="relative">
-                      <input 
-                        type="text" 
-                        value={loc}
-                        onChange={e => {
-                          const newLocs = [...ownerCreationData.locations];
-                          newLocs[idx] = e.target.value;
-                          setOwnerCreationData({...ownerCreationData, locations: newLocs});
-                        }}
-                        className="w-full bg-slate-50 border-2 border-slate-50 rounded-xl p-3 font-bold text-slate-700 text-sm focus:bg-white focus:border-emerald-500 outline-none transition-all"
-                        placeholder={`Unidade ${idx + 1}`}
-                      />
-                      {idx > 0 && (
-                        <button 
-                          onClick={() => {
-                            const newLocs = ownerCreationData.locations.filter((_, i) => i !== idx);
-                            setOwnerCreationData({...ownerCreationData, locations: newLocs});
-                          }}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-rose-500"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest ml-1">Senha da Loja</label>
-                  <input 
-                    type="password" 
-                    value={ownerCreationData.password}
-                    onChange={e => setOwnerCreationData({...ownerCreationData, password: e.target.value})}
-                    className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl p-4 font-bold text-slate-700 focus:bg-white focus:border-emerald-500 outline-none transition-all"
-                    placeholder="********"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest ml-1 text-center">PIN de 4 Dígitos</label>
-                  <input 
-                    type="text" 
-                    maxLength={4}
-                    value={ownerCreationData.pin}
-                    onChange={e => setOwnerCreationData({...ownerCreationData, pin: e.target.value.replace(/\D/g, '')})}
-                    className="w-full bg-slate-50 border-2 border-slate-50 rounded-2xl p-4 font-black text-slate-800 tracking-[0.5em] text-center focus:bg-white focus:border-emerald-500 outline-none transition-all"
-                    placeholder="0000"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button 
-            onClick={handleCreateOwner}
-            className="w-full bg-emerald-500 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-xl shadow-emerald-500/20 mt-10 flex items-center justify-center gap-3"
-          >
-            <ShieldCheck className="w-6 h-6" />
-            Ativar Conta do Dono
-          </button>
-        </motion.div>
-      </div>
-    );
-  };
-
   const renderDeviceLinking = () => {
     return (
       <div className="fixed inset-0 bg-slate-900 flex items-center justify-center z-[200] p-4 text-white">
@@ -4999,271 +4492,6 @@ Obrigado pela preferência!
             </div>
           </div>
         </motion.div>
-      </div>
-    );
-  };
-
-  const handleLogin = (staffMember?: Staff) => {
-    const target = staffMember || staff.find(s => s.pin === pinInput);
-    if (target && target.pin === pinInput) {
-      setCurrentUser(target);
-      setLastStaffId(target.id);
-      localStorage.setItem('rm_last_staff_id', target.id);
-      setPinInput('');
-      setCurrentView(systemMode === 'distributor' ? 'orders' : 'dashboard');
-    } else if (pinInput.length >= 4) {
-      // Wrong PIN
-      setPinInput('');
-    }
-  };
-
-  const renderCompanyLogin = () => {
-    return (
-      <div className="fixed inset-0 bg-slate-900 flex items-center justify-center z-[110] p-4 font-sans">
-        {isDevMode && renderDeveloperPanel()}
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-md bg-white rounded-[2.5rem] p-10 shadow-2xl text-center"
-        >
-          <div 
-            onClick={() => {
-              const newClicks = devClicks + 1;
-              setDevClicks(newClicks);
-              if (newClicks >= 7) {
-                setIsDevMode(true);
-                setDevClicks(0);
-              }
-            }}
-            className="w-20 h-20 bg-emerald-500 rounded-3xl flex items-center justify-center shadow-xl shadow-emerald-500/20 mx-auto mb-8 ring-8 ring-emerald-50 cursor-default select-none active:scale-95 transition-transform"
-          >
-             <Building2 className="w-10 h-10 text-white" />
-          </div>
-          <h1 className="text-3xl font-black text-slate-800 tracking-tight mb-2">Conectar Unidade</h1>
-          <p className="text-slate-400 text-sm font-medium mb-10 leading-relaxed px-4">
-            Olá 👋! Vincule este dispositivo a uma unidade para sincronizar dados em tempo real ou use o modo local.
-          </p>
-          
-          <div className="space-y-6">
-            <div className="relative group">
-              <Key className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-emerald-500 transition-colors" />
-              <input 
-                type="text" 
-                placeholder="Chave da Unidade (Ex: loja-1)"
-                value={companyIdInput}
-                onChange={(e) => setCompanyIdInput(e.target.value)}
-                className="w-full bg-slate-100 border-2 border-slate-100 rounded-2xl py-5 pl-14 pr-6 font-black text-slate-800 placeholder:text-slate-300 focus:border-emerald-500 focus:bg-white outline-none transition-all uppercase tracking-widest"
-              />
-            </div>
-            
-            <div className="grid grid-cols-1 gap-3">
-              <button 
-                onClick={() => handleCompanyLogin(companyIdInput)}
-                disabled={isSeeding || !companyIdInput}
-                className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-[11px] hover:bg-emerald-500 hover:shadow-xl hover:shadow-emerald-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isSeeding ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                    Conectando...
-                  </>
-                ) : "Sincronizar Cloud"}
-              </button>
-
-              <div className="flex items-center gap-4 py-2">
-                <div className="h-px flex-1 bg-slate-100"></div>
-                <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">OU</span>
-                <div className="h-px flex-1 bg-slate-100"></div>
-              </div>
-
-              <button 
-                onClick={() => {
-                  setIsLocalMode(true);
-                  localStorage.setItem('rm_local_mode', 'true');
-                  setEnterpriseId('local-dev');
-                }}
-                className="w-full bg-white text-slate-400 py-4 rounded-2xl font-black uppercase tracking-widest transition-all border-2 border-slate-100 hover:border-emerald-500 hover:text-emerald-500 active:scale-95 flex items-center justify-center gap-3"
-              >
-                <Smartphone className="w-5 h-5" />
-                Modo Local (Offline)
-              </button>
-            </div>
-
-            <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest px-8">
-              O Modo Local usa o armazenamento do dispositivo ('default do device') e não requer chaves externas.
-            </p>
-          </div>
-        </motion.div>
-      </div>
-    );
-  };
-
-  const renderLogin = () => {
-    if (!authReady && !isLocalMode) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
-        <motion.div 
-          animate={{ scale: [1, 1.1, 1], rotate: [0, 5, -5, 0] }}
-          transition={{ duration: 2, repeat: Infinity }}
-          className="w-24 h-24 bg-indigo-600 rounded-[2.5rem] flex items-center justify-center mb-8 shadow-3xl shadow-indigo-500/20"
-        >
-          <ShieldCheck className="text-white w-12 h-12" />
-        </motion.div>
-        <h2 className="text-2xl font-black text-white tracking-tight mb-2">Validando Sessão Segura</h2>
-        <p className="text-slate-400 text-sm max-w-xs leading-relaxed">
-          Sincronizando protocolos de segurança e integridade com o motor universal...
-        </p>
-        {authError && (
-          <div className="mt-8 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl">
-             <p className="text-rose-400 text-xs font-bold">{authError}</p>
-             <button 
-                onClick={() => setIsLocalMode(true)}
-                className="mt-4 px-4 py-2 bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase"
-             >
-               Mudar para Modo Offline
-             </button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (!enterpriseId) return renderCompanyLogin();
-    if (!isDeviceLinked) return renderDeviceLinking();
-
-    return (
-      <div className="fixed inset-0 bg-slate-900 flex items-center justify-center z-[100] p-4 lg:p-8 overflow-y-auto">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-2 bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
-        >
-          {/* Left: Staff List */}
-          <div className="p-8 lg:p-12 bg-slate-50 border-r border-slate-100 hidden lg:block overflow-y-auto max-h-[80vh]">
-            <div className="flex items-center gap-3 mb-8">
-              <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                <span className="text-white font-black text-xs uppercase">RM</span>
-              </div>
-              <h1 className="text-xl font-black text-slate-800 tracking-tight">RestManager POS</h1>
-            </div>
-            
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-6">Selecione seu Perfil</h2>
-            <div className="grid grid-cols-1 gap-3">
-              {staff.filter(s => s.active).sort((a, b) => a.id === lastStaffId ? -1 : b.id === lastStaffId ? 1 : 0).map(member => (
-                <button
-                  key={member.id}
-                  onClick={() => setPinInput('')}
-                  className={cn(
-                    "flex items-center gap-4 p-4 rounded-2xl bg-white border transition-all group text-left",
-                    member.id === lastStaffId ? "border-emerald-500 shadow-md ring-2 ring-emerald-500/5" : "border-slate-100 hover:border-emerald-500 hover:shadow-lg"
-                  )}
-                >
-                  <div className={cn(
-                    "w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg shadow-inner",
-                    member.role === 'owner' ? "bg-slate-800 text-white" : 
-                    member.role.includes('manager') ? "bg-indigo-500 text-white" : 
-                    "bg-amber-100 text-amber-600"
-                  )}>
-                    {member.name.substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                       <p className="font-bold text-slate-800 group-hover:text-emerald-600 transition-colors">{member.name}</p>
-                       {member.id === lastStaffId && <span className="text-[8px] font-black uppercase bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded">Salvo</span>}
-                    </div>
-                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{member.role.replace('_', ' ')}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Right: PIN Pad */}
-          <div className="p-8 lg:p-12 flex flex-col items-center justify-center bg-white">
-            <div className="lg:hidden flex flex-col items-center mb-10">
-               <div className="w-16 h-16 bg-emerald-500 rounded-3xl flex items-center justify-center shadow-xl shadow-emerald-500/20 mb-4">
-                  <ShieldCheck className="w-8 h-8 text-white" />
-               </div>
-               <h1 className="text-2xl font-black text-slate-800 tracking-tight">Login RestManager</h1>
-            </div>
-
-            <div className="w-full max-w-[280px]">
-               <h2 className="text-center text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-8">Digite seu PIN</h2>
-               
-               <div className="flex justify-center gap-4 mb-10">
-                  {[...Array(4)].map((_, i) => (
-                    <div 
-                      key={i}
-                      className={cn(
-                        "w-4 h-4 rounded-full border-2 transition-all duration-300",
-                        pinInput.length > i ? "bg-emerald-500 border-emerald-500 scale-125" : "border-slate-200"
-                      )}
-                    />
-                  ))}
-               </div>
-
-               <div className="grid grid-cols-3 gap-4">
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, 'OK'].map((key) => (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        if (key === 'C') setPinInput('');
-                        else if (key === 'OK') {
-                           const matchedStaff = staff.find(s => s.pin === pinInput);
-                           if (matchedStaff) {
-                              setCurrentUser(matchedStaff);
-                              setLastStaffId(matchedStaff.id);
-                              localStorage.setItem('rm_last_staff_id', matchedStaff.id);
-                              setPinInput('');
-                              setCurrentView('dashboard');
-                           } else {
-                              setPinInput('');
-                           }
-                        }
-                        else if (pinInput.length < 4) {
-                           const newVal = pinInput + key;
-                           setPinInput(newVal);
-                           if (newVal.length === 4) {
-                              setTimeout(() => {
-                                const matchedStaff = staff.find(s => s.pin === newVal);
-                                if (matchedStaff) {
-                                   setCurrentUser(matchedStaff);
-                                   setLastStaffId(matchedStaff.id);
-                                   localStorage.setItem('rm_last_staff_id', matchedStaff.id);
-                                   setPinInput('');
-                                   setCurrentView('dashboard');
-                                } else {
-                                   setPinInput('');
-                                }
-                              }, 300);
-                           }
-                        }
-                      }}
-                      className={cn(
-                        "w-full aspect-square rounded-2xl flex items-center justify-center text-xl font-bold transition-all active:scale-95 shadow-sm",
-                        key === 'C' ? "bg-rose-50 text-rose-500 hover:bg-rose-100" :
-                        key === 'OK' ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/20" :
-                        "bg-slate-50 text-slate-800 hover:bg-slate-100"
-                      )}
-                    >
-                      {key}
-                    </button>
-                  ))}
-               </div>
-
-               <p className="text-[10px] text-center text-slate-400 font-bold mt-8 uppercase tracking-widest leading-relaxed">
-                  Sistema de acesso restrito.<br/>Fale com o gerente se esqueceu seu PIN.
-               </p>
-               <button 
-                 onClick={() => setIsCreateOwnerModalOpen(true)}
-                 className="w-full mt-6 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-600 transition-colors border-t border-slate-100 pt-6"
-               >
-                 Criar Conta (Dono)
-               </button>
-            </div>
-          </div>
-        </motion.div>
-        {renderCreateOwnerModal()}
       </div>
     );
   };
@@ -8202,7 +7430,7 @@ Obrigado pela preferência!
   };
 
 
-  if (!currentUser) return renderLogin();
+  if (!currentUser) return <LoginView />;
 
   return (
     <div 
@@ -8785,3 +8013,6 @@ function LegendItem({ color, label }: any) {
     </div>
   );
 }
+
+
+

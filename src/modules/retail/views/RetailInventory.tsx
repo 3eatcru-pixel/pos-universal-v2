@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
@@ -19,10 +19,15 @@ import {
   Calendar,
   ShieldAlert,
   ClipboardList,
-  Clock
+  Clock,
+  Wifi,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
+import { productRepository } from '../../../core/storage/repositories/productRepository';
+import { retailService, RetailSyncStatus } from '../services/retailService';
 
 interface RetailProduct {
   id: string;
@@ -99,8 +104,103 @@ const MOCK_PRODUCTS: RetailProduct[] = [
 export const RetailInventory: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [products, setProducts] = useState<RetailProduct[]>(MOCK_PRODUCTS);
+  const [syncStatus, setSyncStatus] = useState<RetailSyncStatus>({
+    connected: false,
+    pendingCount: 0,
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    isRetrying: false,
+    resentInSession: 0,
+    recentEvents: [],
+  });
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
 
-  const filteredProducts = MOCK_PRODUCTS.filter(p => {
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadRealtimeProducts = async () => {
+      const persistedProducts = await productRepository.findAll();
+      if (!isMounted) return;
+
+      if (persistedProducts.length === 0) {
+        setProducts(MOCK_PRODUCTS);
+        return;
+      }
+
+      const mergedProducts = MOCK_PRODUCTS.map((mock) => {
+        const persisted = persistedProducts.find(
+          (product) =>
+            product.id === mock.id ||
+            product.name.trim().toLowerCase() === mock.name.trim().toLowerCase()
+        );
+
+        if (!persisted) return mock;
+
+        return {
+          ...mock,
+          stock: Number(persisted.stock || 0),
+          price: Number(persisted.price ?? mock.price),
+        };
+      });
+
+      setProducts(mergedProducts);
+    };
+
+    const onSaleUpdated = () => {
+      void loadRealtimeProducts();
+    };
+
+    void loadRealtimeProducts();
+    window.addEventListener('retail:sale-updated', onSaleUpdated);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('retail:sale-updated', onSaleUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadSyncStatus = async () => {
+      const status = await retailService.getSyncQueueStatus();
+      if (isMounted) {
+        setSyncStatus(status);
+      }
+    };
+
+    const onSyncStatus = (event: Event) => {
+      const detail = (event as CustomEvent<RetailSyncStatus>).detail;
+      if (!detail || !isMounted) return;
+      setSyncStatus(detail);
+    };
+
+    void loadSyncStatus();
+    window.addEventListener('retail:sync-status', onSyncStatus as EventListener);
+    const syncPolling = window.setInterval(() => {
+      void loadSyncStatus();
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('retail:sync-status', onSyncStatus as EventListener);
+      window.clearInterval(syncPolling);
+    };
+  }, []);
+
+  const handleManualSync = async () => {
+    if (isManualSyncing || syncStatus.isRetrying) return;
+    setIsManualSyncing(true);
+    try {
+      const status = await retailService.syncNow();
+      setSyncStatus(status);
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
+
+  const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory;
     return matchesSearch && matchesCategory;
@@ -123,11 +223,38 @@ export const RetailInventory: React.FC = () => {
         </div>
       </div>
 
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", syncStatus.connected ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600")}>
+            {syncStatus.connected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sync Estoque</p>
+            <p className="text-sm font-black text-slate-800">
+              {syncStatus.connected ? "Conectado em tempo real" : "Offline - sincronização pendente"}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+            Pendentes: {syncStatus.pendingCount}
+          </p>
+          <button
+            onClick={() => void handleManualSync()}
+            disabled={isManualSyncing || syncStatus.isRetrying}
+            className="px-4 py-2 bg-slate-900 text-white rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-indigo-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <RefreshCw className={cn("w-4 h-4", (isManualSyncing || syncStatus.isRetrying) && "animate-spin")} />
+            Sincronizar
+          </button>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex items-center justify-between group">
             <div>
                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Total em gado</p>
-               <p className="text-3xl font-black text-slate-800 tracking-tighter">142 SKUs</p>
+               <p className="text-3xl font-black text-slate-800 tracking-tighter">{products.length} SKUs</p>
             </div>
             <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center group-hover:scale-110 transition-transform">
                <Box className="w-8 h-8" />
@@ -136,7 +263,7 @@ export const RetailInventory: React.FC = () => {
          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex items-center justify-between group">
             <div>
                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Variantes Totais</p>
-               <p className="text-3xl font-black text-slate-800 tracking-tighter">845 Unidades</p>
+               <p className="text-3xl font-black text-slate-800 tracking-tighter">{products.reduce((sum, p) => sum + Number(p.stock || 0), 0)} Unidades</p>
             </div>
             <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center group-hover:scale-110 transition-transform">
                <Layers className="w-8 h-8" />
@@ -145,7 +272,7 @@ export const RetailInventory: React.FC = () => {
          <div className="bg-white p-8 rounded-[2.5rem] border border-rose-100 shadow-sm flex items-center justify-between group relative overflow-hidden">
             <div className="relative z-10">
                <p className="text-[10px] font-black uppercase text-rose-400 tracking-widest mb-1">Reposição Necessária</p>
-               <p className="text-3xl font-black text-rose-600 tracking-tighter">12 Itens</p>
+               <p className="text-3xl font-black text-rose-600 tracking-tighter">{products.filter((p) => p.stock <= p.minStock).length} Itens</p>
             </div>
             <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-3xl flex items-center justify-center group-hover:scale-110 transition-transform relative z-10">
                <TrendingDown className="w-8 h-8" />

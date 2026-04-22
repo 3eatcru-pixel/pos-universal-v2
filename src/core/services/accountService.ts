@@ -1,119 +1,172 @@
-import { Company, Employee, SupportMessage, User, BusinessMode, UserRole } from '../types';
-import { integrationLayer } from '../../integration/integrationLayer';
+import { Company, SupportMessage, User, BusinessMode } from '../types';
 import { meshNetwork } from '../../services/p2pSync';
+import { authService } from '../../auth/authService';
 
 class AccountService {
-  private companies: Company[] = JSON.parse(localStorage.getItem('pos_companies') || '[]');
-  private currentUser: User | null = JSON.parse(localStorage.getItem('pos_current_user') || 'null');
+  private mapRoleForLegacy(role: string): User['role'] {
+    if (role === 'staff') return 'staff';
+    if (role === 'manager') return 'manager';
+    if (role === 'owner') return 'owner';
+    if (role === 'dev') return 'dev';
+    return 'staff';
+  }
 
-  // Multi-company Isolation: The "Gold standard" for this POS
+  private toLegacyUser(): User | null {
+    const authUser = authService.getCurrentUser();
+    const tenant = authService.getCurrentTenant();
+    if (!authUser) return null;
+
+    return {
+      id: authUser.id,
+      name: authUser.name,
+      role: this.mapRoleForLegacy(authUser.role),
+      email: authUser.email,
+      pin: authUser.pin,
+      companyId: authUser.tenantId || tenant?.id || 'global',
+    };
+  }
+
   public getCurrentCompanyId(): string | null {
-    return this.currentUser?.companyId || null;
+    return authService.getCurrentTenant()?.id || null;
   }
 
-  public async registerCompany(name: string, ownerEmail: string, businessType: BusinessMode, ownerName?: string, ownerPhone?: string, enabledModules?: string[]): Promise<Company> {
-    const newCompany: any = {
-      id: `comp-${Math.random().toString(36).substring(7)}`,
-      name,
-      ownerId: `usr-${Math.random().toString(36).substring(7)}`,
-      businessType,
-      ownerEmail,
-      ownerName: ownerName || 'Proprietário',
-      ownerPhone,
-      accessCode: Math.floor(100000 + Math.random() * 900000).toString(),
-      status: 'active',
-      createdAt: Date.now(),
-      enabledModules: enabledModules || [businessType]
-    };
-
-    this.companies.push(newCompany);
-    this.saveCompanies();
-
-    // Auto-login as owner
-    this.loginAsOwner(newCompany);
-    return newCompany;
+  public getCurrentTenant() {
+    return authService.getCurrentTenant();
   }
 
-  public async loginAsOwner(company: Company) {
-    const user: User = {
-      id: `owner-${company.id}`,
-      name: 'Proprietário',
-      role: 'owner',
-      email: company.ownerEmail,
-      companyId: company.id
+  public async registerCompany(
+    name: string,
+    ownerEmail: string,
+    businessType: BusinessMode,
+    ownerName?: string,
+    ownerPhone?: string,
+    enabledModules?: string[]
+  ): Promise<Company> {
+    const ownerPassword = Math.random().toString(36).slice(2, 10);
+    const ownerPin = Math.floor(1000 + Math.random() * 9000).toString();
+
+    const created = authService.createOwner(
+      {
+        name,
+        businessType,
+        ownerEmail,
+        ownerName: ownerName || 'Proprietário',
+        ownerPhone,
+        enabledModules: enabledModules || [businessType],
+      },
+      {
+        password: ownerPassword,
+        pin: ownerPin,
+      }
+    );
+
+    return {
+      id: created.tenant.id,
+      name: created.tenant.name,
+      ownerId: created.tenant.ownerId,
+      businessType: created.tenant.businessType,
+      ownerEmail: created.tenant.ownerEmail,
+      ownerName: created.tenant.ownerName,
+      ownerPhone: created.tenant.ownerPhone,
+      accessCode: created.tenant.accessCode,
+      status: created.tenant.status,
+      createdAt: created.tenant.createdAt,
+      enabledModules: created.tenant.enabledModules,
+      lockedModules: created.tenant.lockedModules,
+      isPaused: created.tenant.isPaused,
+      owners: [created.owner.id],
     };
-    this.setCurrentUser(user);
-    // Persist business mode for the module manager
-    localStorage.setItem('pos_business_mode', company.businessType);
+  }
+
+  public async createOwner(
+    tenantData: {
+      name: string;
+      businessType: BusinessMode;
+      ownerEmail: string;
+      ownerName: string;
+      ownerPhone?: string;
+      enabledModules?: string[];
+    },
+    ownerData: { password: string; pin?: string }
+  ) {
+    return authService.createOwner(tenantData, ownerData);
+  }
+
+  public async loginWithCredentials(email: string, password: string, tenantId?: string): Promise<boolean> {
+    return authService.loginWithCredentials(email, password, tenantId);
+  }
+
+  public async loginWithPIN(pin: string, tenantId: string): Promise<boolean> {
+    return authService.loginWithPIN(pin, tenantId);
+  }
+
+  public async createStaff(input: {
+    tenantId: string;
+    name: string;
+    email?: string;
+    password?: string;
+    pin?: string;
+    role: 'manager' | 'staff';
+  }) {
+    return authService.createStaff(input);
+  }
+
+  public async updateStaff(
+    userId: string,
+    patch: Partial<{ name: string; email: string; pin: string; password: string; active: boolean }>
+  ) {
+    return authService.updateStaff(userId, patch);
+  }
+
+  public async assignRole(userId: string, role: 'manager' | 'staff') {
+    return authService.assignRole(userId, role);
+  }
+
+  public async loginAsOwner(company: Company): Promise<boolean> {
+    const users = authService.getUsersByTenant(company.id);
+    const owner = users.find((u) => u.role === 'owner' && (u.email || '').toLowerCase() === company.ownerEmail.toLowerCase());
+    if (!owner || !owner.password || !owner.email) return false;
+    return authService.loginWithCredentials(owner.email, owner.password, company.id);
   }
 
   public async joinAsEmployee(accessCode: string, name: string): Promise<boolean> {
-    const company = this.companies.find(c => c.accessCode === accessCode && (c.status === 'active' || c.status === 'maintenance'));
-    if (!company) return false;
+    const tenant = authService.listTenants().find((t) => t.accessCode === accessCode && (t.status === 'active' || t.status === 'maintenance'));
+    if (!tenant) return false;
 
-    const user: User = {
-      id: `emp-${Math.random().toString(36).substring(7)}`,
+    const tempPin = Math.floor(1000 + Math.random() * 9000).toString();
+    const created = authService.createStaff({
+      tenantId: tenant.id,
       name,
-      role: 'operator',
-      companyId: company.id
-    };
-
-    this.setCurrentUser(user);
-    localStorage.setItem('pos_business_mode', company.businessType);
-    window.location.reload();
-    return true;
+      pin: tempPin,
+      role: 'staff',
+    });
+    return authService.loginWithPIN(created.pin || tempPin, tenant.id);
   }
 
-  public async loginAsDev(email: string): Promise<boolean> {
-    // Basic dev check
-    if (email.endsWith('@dev.com') || email === 'admin@pos.com') {
-      const user: User = {
-        id: 'dev-master',
-        name: 'Developer Global',
-        role: 'dev',
-        email,
-        companyId: 'global'
-      };
-      this.setCurrentUser(user);
-      return true;
-    }
-    return false;
+  public async loginAsDev(email: string, password?: string): Promise<boolean> {
+    return authService.loginAsDev(email, password);
   }
 
   public async loginAsMasterDev(): Promise<boolean> {
-    const user: User = {
-      id: 'dev-master-bypass',
-      name: 'System Architect',
-      role: 'dev',
-      email: 'architect@core.sys',
-      companyId: 'global'
-    };
-    this.setCurrentUser(user);
-    return true;
+    return authService.loginAsDev('admin@pos.com', 'dev123');
   }
 
   public async loginAsServer(accessCode: string): Promise<boolean> {
-    const company = this.companies.find(c => c.accessCode === accessCode && c.status === 'active');
-    if (!company) return false;
+    const tenant = authService.listTenants().find((t) => t.accessCode === accessCode && t.status === 'active');
+    if (!tenant) return false;
 
-    const user: User = {
-      id: `srv-${company.id}`,
-      name: 'Central Processing Node',
-      role: 'dev', // High privileges for the headless server
-      companyId: company.id
-    };
+    const success = authService.loginAsDev('admin@pos.com', 'dev123');
+    if (!success) return false;
 
     localStorage.setItem('pos_device_role', 'host');
     localStorage.setItem('pos_device_mode', 'central_server');
-    localStorage.setItem('pos_business_mode', company.businessType);
-    this.setCurrentUser(user);
-    window.location.reload();
+    localStorage.setItem('pos_business_mode', tenant.businessType);
+    localStorage.setItem('rm_enterprise_id', tenant.id);
     return true;
   }
 
   public logout() {
-    this.currentUser = null;
-    localStorage.removeItem('pos_current_user');
+    authService.logout();
     localStorage.removeItem('pos_business_mode');
     localStorage.removeItem('pos_device_role');
     localStorage.removeItem('pos_device_mode');
@@ -121,73 +174,104 @@ class AccountService {
   }
 
   public async loginAsDemo() {
-    // Look for existing demo or use first company as demo for this test environment
-    const demoCompany = this.companies[0] || await this.registerCompany('Sistema Modular Demo', 'demo@modular.com', 'restaurant', 'Admin Demo', '11999999999');
-    
-    const user: User = {
-      id: `demo-${demoCompany.id}`,
-      name: 'Usuário Demo',
-      role: 'owner',
-      email: demoCompany.ownerEmail,
-      companyId: demoCompany.id
-    };
-    
-    this.setCurrentUser(user);
-    // Do not force a mode so the user can choose in the selector
+    const tenants = authService.listTenants();
+    let tenant = tenants[0];
+
+    if (!tenant) {
+      const created = authService.createOwner(
+        {
+          name: 'Sistema Modular Demo',
+          ownerEmail: 'demo@modular.com',
+          businessType: 'restaurant',
+          ownerName: 'Admin Demo',
+          ownerPhone: '11999999999',
+          enabledModules: ['restaurant', 'retail', 'market', 'service'],
+        },
+        {
+          password: 'demo123',
+          pin: '1234',
+        }
+      );
+      tenant = created.tenant;
+    }
+
+    const owner = authService.getUsersByTenant(tenant.id).find((u) => u.role === 'owner');
+    if (!owner || !owner.email || !owner.password) {
+      return;
+    }
+
+    authService.loginWithCredentials(owner.email, owner.password, tenant.id);
     localStorage.removeItem('pos_business_mode');
     window.location.reload();
   }
 
-  private setCurrentUser(user: User) {
-    this.currentUser = user;
-    localStorage.setItem('pos_current_user', JSON.stringify(user));
-  }
-
   public getCurrentUser(): User | null {
-    return this.currentUser;
+    return this.toLegacyUser();
   }
 
   public getAllCompanies(): Company[] {
-    return this.companies;
+    return authService.listTenants().map((t) => ({
+      id: t.id,
+      name: t.name,
+      ownerId: t.ownerId,
+      businessType: t.businessType,
+      ownerEmail: t.ownerEmail,
+      ownerName: t.ownerName,
+      ownerPhone: t.ownerPhone,
+      accessCode: t.accessCode,
+      status: t.status,
+      createdAt: t.createdAt,
+      lockedModules: t.lockedModules,
+      enabledModules: t.enabledModules,
+      isPaused: t.isPaused,
+      owners: [t.ownerId],
+    }));
   }
 
   public getCompanyById(id: string): Company | null {
-    return this.companies.find(c => c.id === id) || null;
+    const tenant = authService.getTenantById(id);
+    if (!tenant) return null;
+    return {
+      id: tenant.id,
+      name: tenant.name,
+      ownerId: tenant.ownerId,
+      businessType: tenant.businessType,
+      ownerEmail: tenant.ownerEmail,
+      ownerName: tenant.ownerName,
+      ownerPhone: tenant.ownerPhone,
+      accessCode: tenant.accessCode,
+      status: tenant.status,
+      createdAt: tenant.createdAt,
+      lockedModules: tenant.lockedModules,
+      enabledModules: tenant.enabledModules,
+      isPaused: tenant.isPaused,
+      owners: [tenant.ownerId],
+    };
   }
 
   public async toggleMaintenance(companyId: string, enabled: boolean) {
-    const company = this.companies.find(c => c.id === companyId);
-    if (company) {
-      company.status = enabled ? 'maintenance' : 'active';
-      this.saveCompanies();
-      
-      if (enabled) {
-        this.createDevNotification(companyId, 'Manutenção Iniciada', 'Sua conta está sob manutenção pelo desenvolvedor e será atualizada em breve.');
-      }
+    authService.updateTenant(companyId, { status: enabled ? 'maintenance' : 'active' });
+    if (enabled) {
+      this.createDevNotification(
+        companyId,
+        'Manutenção Iniciada',
+        'Sua conta está sob manutenção pelo desenvolvedor e será atualizada em breve.'
+      );
     }
   }
 
   public async toggleModuleLock(companyId: string, moduleId: string, locked: boolean) {
-    const company = this.companies.find(c => c.id === companyId);
-    if (company) {
-      const currentLocked = company.lockedModules || [];
-      if (locked) {
-        if (!currentLocked.includes(moduleId)) {
-          company.lockedModules = [...currentLocked, moduleId];
-        }
-      } else {
-        company.lockedModules = currentLocked.filter(m => m !== moduleId);
-      }
-      this.saveCompanies();
-    }
+    const company = this.getCompanyById(companyId);
+    if (!company) return;
+    const currentLocked = company.lockedModules || [];
+    const nextLocked = locked
+      ? Array.from(new Set([...currentLocked, moduleId]))
+      : currentLocked.filter((m) => m !== moduleId);
+    authService.updateTenant(companyId, { lockedModules: nextLocked });
   }
 
   public async setEnabledModules(companyId: string, modules: string[]) {
-    const company = this.companies.find(c => c.id === companyId);
-    if (company) {
-      (company as any).enabledModules = modules;
-      this.saveCompanies();
-    }
+    authService.updateTenant(companyId, { enabledModules: modules });
   }
 
   private createDevNotification(companyId: string, title: string, message: string) {
@@ -199,7 +283,7 @@ class AccountService {
       timestamp: Date.now(),
       read: false,
       type: 'maintenance',
-      companyId
+      companyId,
     };
     notifications.push(newNotif);
     localStorage.setItem('pos_notifications', JSON.stringify(notifications));
@@ -211,37 +295,27 @@ class AccountService {
   }
 
   public async loginAsManager(companyId: string) {
-    const company = this.getCompanyById(companyId);
-    if (!company) return;
-
-    // Send maintenance notification to owner if a dev enters
-    this.createDevNotification(companyId, 'Acesso Presencial Remoto', 'Um desenvolvedor acessou sua conta para verificações técnicas.');
-    
-    const user: User = {
-      id: `dev-access-${company.id}`,
-      name: `Dev (${company.ownerName})`,
-      role: 'dev', // Keep as dev but scoped to company
-      email: company.ownerEmail,
-      companyId: company.id
-    };
-    this.setCurrentUser(user);
-    localStorage.setItem('pos_business_mode', company.businessType);
+    const manager = authService.getUsersByTenant(companyId).find((u) => u.role === 'manager');
+    if (!manager) {
+      throw new Error('Nenhum gerente cadastrado para esta empresa.');
+    }
+    const ok = authService.loginWithPIN(manager.pin || '0000', companyId);
+    if (!ok) {
+      throw new Error('Falha ao abrir sessão de gerente.');
+    }
+    localStorage.setItem('pos_business_mode', authService.getTenantById(companyId)?.businessType || 'restaurant');
     window.location.reload();
   }
 
-  private saveCompanies() {
-    localStorage.setItem('pos_companies', JSON.stringify(this.companies));
-  }
-
-  // Support
   public async sendSupportMessage(message: string) {
-    if (!this.currentUser) return;
+    const user = this.getCurrentUser();
+    if (!user) return;
     const msg: SupportMessage = {
       id: `msg-${Date.now()}`,
-      companyId: this.currentUser.companyId,
+      companyId: user.companyId,
       message,
       timestamp: Date.now(),
-      status: 'open'
+      status: 'open',
     };
     const messages = JSON.parse(localStorage.getItem('pos_support_messages') || '[]');
     messages.push(msg);
@@ -255,33 +329,24 @@ class AccountService {
   public async pauseSystem(companyId: string, pin: string): Promise<boolean> {
     const user = this.getCurrentUser();
     if (!user || (user.role !== 'owner' && user.role !== 'manager' && user.role !== 'dev')) return false;
+    if (pin !== '1234') return false;
 
-    // Em um sistema real, o PIN seria validado no Firebase/Server
-    if (pin !== '1234') return false; 
+    const company = this.getCompanyById(companyId);
+    if (!company) return false;
 
-    const company = this.companies.find(c => c.id === companyId);
-    if (company) {
-      company.isPaused = !company.isPaused;
-      this.saveCompanies();
-      
-      // Notificar rede
-      meshNetwork.broadcast('system:pause_state', { 
-        companyId, 
-        isPaused: company.isPaused 
-      });
-      return true;
-    }
-    return false;
+    const nextPaused = !Boolean(company.isPaused);
+    authService.updateTenant(companyId, { isPaused: nextPaused });
+    meshNetwork.broadcast('system:pause_state', { companyId, isPaused: nextPaused });
+    return true;
   }
 
   public async logoutCompany() {
     const user = this.getCurrentUser();
-    // Apenas dono ou gerente pode desvincular a empresa do terminal
     if (!user || (user.role !== 'owner' && user.role !== 'manager' && user.role !== 'dev')) {
-      throw new Error("Apenas o Dono ou Gerente pode desconectar a empresa deste terminal.");
+      throw new Error('Apenas o Dono ou Gerente pode desconectar a empresa deste terminal.');
     }
 
-    localStorage.removeItem('pos_current_user');
+    authService.logout();
     localStorage.removeItem('pos_device_mode');
     localStorage.removeItem('pos_device_role');
     localStorage.removeItem('pos_business_mode');
@@ -291,7 +356,14 @@ class AccountService {
 
   public getCompanyPauseStatus(companyId: string): boolean {
     const company = this.getCompanyById(companyId);
-    return company?.isPaused || false;
+    return Boolean(company?.isPaused);
+  }
+
+  public migrateRestaurantUsers(
+    tenantId: string,
+    legacyStaff: Array<{ id: string; name: string; role?: string; pin?: string; email?: string }>
+  ): number {
+    return authService.migrateRestaurantUsers(tenantId, legacyStaff);
   }
 }
 

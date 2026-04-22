@@ -23,7 +23,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import LegacyApp from './App';
 
 export default function ModularApp() {
-  const [currentUser] = useState(accountService.getCurrentUser());
+  const currentUser = accountService.getCurrentUser();
   const [mode, setMode] = useState<BusinessMode>(() => {
     return localStorage.getItem('pos_business_mode') as BusinessMode || null;
   });

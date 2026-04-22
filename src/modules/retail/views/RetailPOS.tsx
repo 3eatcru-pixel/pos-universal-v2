@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   ShoppingCart, 
   Search, 
@@ -15,11 +15,15 @@ import {
   ChevronRight,
   LayoutGrid,
   List,
-  X
+  X,
+  Wifi,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { paymentService } from '../../../services/paymentService';
+import { retailService, RetailSyncStatus } from '../services/retailService';
 
 interface CartItem {
   id: string;
@@ -29,10 +33,22 @@ interface CartItem {
   variation?: string;
 }
 
+type PaymentMethod = 'card' | 'cash' | 'pix';
+
 export const RetailPOS: React.FC = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isQuickStockOpen, setIsQuickStockOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<RetailSyncStatus>({
+    connected: false,
+    pendingCount: 0,
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    isRetrying: false,
+    resentInSession: 0,
+    recentEvents: [],
+  });
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
   const [products, setProducts] = useState([
      { id: '1', name: 'Smartphone Z', price: 2499, category: 'Eletrônicos', active: true },
      { id: '2', name: 'Camiseta Air', price: 129, category: 'Vestuário', active: true },
@@ -45,6 +61,35 @@ export const RetailPOS: React.FC = () => {
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   const tax = subtotal * 0.05;
   const total = subtotal + tax;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadSyncStatus = async () => {
+      const status = await retailService.getSyncQueueStatus();
+      if (isMounted) {
+        setSyncStatus(status);
+      }
+    };
+
+    const onSyncStatus = (event: Event) => {
+      const detail = (event as CustomEvent<RetailSyncStatus>).detail;
+      if (!detail || !isMounted) return;
+      setSyncStatus(detail);
+    };
+
+    void loadSyncStatus();
+    window.addEventListener('retail:sync-status', onSyncStatus as EventListener);
+    const syncPolling = window.setInterval(() => {
+      void loadSyncStatus();
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('retail:sync-status', onSyncStatus as EventListener);
+      window.clearInterval(syncPolling);
+    };
+  }, []);
 
   const handleAddToCart = (product: any) => {
     const existing = cart.find(i => i.id === product.id);
@@ -59,8 +104,72 @@ export const RetailPOS: React.FC = () => {
     setCart(cart.filter(i => i.id !== id));
   };
 
+  const finalizePayment = async (paymentMethod: PaymentMethod) => {
+    if(cart.length === 0) return alert('Carrinho vazio!');
+
+    await paymentService.processPayment({ amount: total, method: paymentMethod, module: 'retail' });
+
+    const saleData = {
+      id: `sale_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      items: cart.map((item) => ({
+        productId: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.price,
+        totalPrice: item.price * item.quantity,
+      })),
+      subtotal,
+      tax,
+      total,
+      paymentMethod,
+      createdAt: new Date().toISOString(),
+    };
+
+    await retailService.processSale(saleData);
+    alert(`Pagamento ${paymentMethod.toUpperCase()} de ${formatCurrency(total)} registrado com sucesso!`);
+    setCart([]);
+  };
+
+  const handleManualSync = async () => {
+    if (isManualSyncing || syncStatus.isRetrying) return;
+    setIsManualSyncing(true);
+    try {
+      const status = await retailService.syncNow();
+      setSyncStatus(status);
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col lg:flex-row gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24 lg:pb-0">
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24 lg:pb-0">
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", syncStatus.connected ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600")}>
+            {syncStatus.connected ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Sync PDV</p>
+            <p className="text-sm font-black text-slate-800">
+              {syncStatus.connected ? "Conectado em tempo real" : "Offline - fila local ativa"}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+            Pendentes: {syncStatus.pendingCount}
+          </p>
+          <button
+            onClick={() => void handleManualSync()}
+            disabled={isManualSyncing || syncStatus.isRetrying}
+            className="px-4 py-2 bg-slate-900 text-white rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-indigo-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <RefreshCw className={cn("w-4 h-4", (isManualSyncing || syncStatus.isRetrying) && "animate-spin")} />
+            Sincronizar
+          </button>
+        </div>
+      </div>
+      <div className="flex flex-col lg:flex-row gap-8">
       {/* Product Selection Area */}
       <div className="flex-1 bg-white rounded-[3rem] border border-slate-100 shadow-sm flex flex-col overflow-hidden">
          <div className="p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -219,34 +328,19 @@ export const RetailPOS: React.FC = () => {
 
          <div className="grid grid-cols-3 gap-4">
             <button 
-              onClick={async () => {
-                if(cart.length === 0) return alert('Carrinho vazio!');
-                await paymentService.processPayment({ amount: total, method: 'card', module: 'retail' });
-                alert(`Pagamento Cartão de ${formatCurrency(total)} registrado com sucesso!`);
-                setCart([]);
-              }}
+              onClick={() => finalizePayment('card')}
               className="p-6 bg-indigo-100 text-indigo-600 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-indigo-600 hover:text-white transition-all shadow-sm group">
                <CreditCard className="w-6 h-6 group-hover:scale-110 transition-transform" />
                <span className="text-[9px] font-black uppercase tracking-widest">Cartão</span>
             </button>
             <button 
-              onClick={async () => {
-                if(cart.length === 0) return alert('Carrinho vazio!');
-                await paymentService.processPayment({ amount: total, method: 'cash', module: 'retail' });
-                alert(`Pagamento Dinheiro de ${formatCurrency(total)} registrado com sucesso!`);
-                setCart([]);
-              }}
+              onClick={() => finalizePayment('cash')}
               className="p-6 bg-emerald-100 text-emerald-600 rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-emerald-600 hover:text-white transition-all shadow-sm group">
                <Banknote className="w-6 h-6 group-hover:scale-110 transition-transform" />
                <span className="text-[9px] font-black uppercase tracking-widest">Dinheiro</span>
             </button>
             <button 
-              onClick={async () => {
-                if(cart.length === 0) return alert('Carrinho vazio!');
-                await paymentService.processPayment({ amount: total, method: 'pix', module: 'retail' });
-                alert(`Pagamento PIX de ${formatCurrency(total)} registrado com sucesso!`);
-                setCart([]);
-              }}
+              onClick={() => finalizePayment('pix')}
               className="p-6 bg-slate-900 text-white rounded-[2rem] flex flex-col items-center justify-center gap-2 hover:bg-indigo-600 transition-all shadow-xl group">
                <Zap className="w-6 h-6 animate-pulse group-hover:scale-110" />
                <span className="text-[9px] font-black uppercase tracking-widest">PIX</span>
@@ -310,6 +404,7 @@ export const RetailPOS: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 };

@@ -12,23 +12,26 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+        includeAssets: ['icons/icon-192.png', 'icons/icon-512.png'],
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB limit
         },
         manifest: {
-          name: 'RestManager POS',
-          short_name: 'RestManager',
-          description: 'P2P Offline-First Restaurant Management',
+          name: 'POS Universal',
+          short_name: 'POS',
+          start_url: '/',
+          display: 'standalone',
+          background_color: '#0f172a',
           theme_color: '#0f172a',
+          orientation: 'portrait',
           icons: [
             {
-              src: 'pwa-192x192.png',
+              src: 'icons/icon-192.png',
               sizes: '192x192',
               type: 'image/png'
             },
             {
-              src: 'pwa-512x512.png',
+              src: 'icons/icon-512.png',
               sizes: '512x512',
               type: 'image/png'
             }
