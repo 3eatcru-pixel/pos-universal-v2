@@ -2013,10 +2013,16 @@ Obrigado pela preferência!
       return item;
     });
 
-    await firebaseService.updateItem('orders', orderId, { 
-      items: updatedItems, 
-      status: 'preparing' 
-    });
+    if (isLocalMode) {
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, items: updatedItems, status: 'preparing' } : o));
+      meshNetwork.broadcast('order:update', { id: orderId, items: updatedItems, status: 'preparing' });
+    } else {
+      await firebaseService.upsertOrderForTableAtomic({
+        ...order,
+        items: updatedItems,
+        status: 'preparing'
+      });
+    }
   };
 
   const handleMarkItemsReady = async (orderId: string, isBar: boolean) => {
@@ -2041,10 +2047,16 @@ Obrigado pela preferência!
        targetStatus = order.closedAt ? 'delivered' : 'ready';
     }
 
-    await firebaseService.updateItem('orders', orderId, { 
-      items: updatedItems, 
-      status: targetStatus 
-    });
+    if (isLocalMode) {
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, items: updatedItems, status: targetStatus } : o));
+      meshNetwork.broadcast('order:update', { id: orderId, items: updatedItems, status: targetStatus });
+    } else {
+      await firebaseService.upsertOrderForTableAtomic({
+        ...order,
+        items: updatedItems,
+        status: targetStatus
+      });
+    }
 
     const table = tables.find(t => t.id === order.tableId);
     if (anyReady && order.tableId !== 'takeaway') {
@@ -8013,7 +8025,10 @@ Obrigado pela preferência!
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...updates } : o));
       meshNetwork.broadcast('order:update', { id: orderId, ...updates });
     } else {
-      await firebaseService.updateItem('orders', orderId, updates);
+      await firebaseService.upsertOrderForTableAtomic({
+        ...order,
+        ...updates
+      });
     }
   };
 
