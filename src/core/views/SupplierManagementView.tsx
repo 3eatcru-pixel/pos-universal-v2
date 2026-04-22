@@ -47,7 +47,7 @@ export const SupplierManagementView: React.FC<SupplierManagementViewProps> = ({ 
   const [activeTab, setActiveTab] = useState<'info' | 'contracts' | 'orders'>('info');
 
   const currentUser = accountService.getCurrentUser();
-  const companyId = currentUser?.companyId || 'default';
+  const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
 
   useEffect(() => {
     loadData();

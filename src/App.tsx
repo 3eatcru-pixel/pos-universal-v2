@@ -908,6 +908,7 @@ export default function App() {
 
   // Create Owner Modal State
   const [isCreateOwnerModalOpen, setIsCreateOwnerModalOpen] = useState(false);
+  const [isCreatingOwner, setIsCreatingOwner] = useState(false);
   const [ownerCreationData, setOwnerCreationData] = useState({ 
     masterKey: '',
     name: '', 
@@ -1645,151 +1646,162 @@ Obrigado pela preferência!
   };
 
   const handleCreateOwner = async () => {
-    // Verificar se a chave existe e não foi usada
-    const validKey = masterKeys.find(k => k.key === ownerCreationData.masterKey && !k.used);
+    if (isCreatingOwner) return;
 
-    if (!validKey) {
-      alert('Chave Mestra inválida ou já utilizada!');
+    const ownerName = ownerCreationData.name.trim();
+    const companyName = ownerCreationData.companyName.trim();
+    const password = ownerCreationData.password.trim();
+    const pin = ownerCreationData.pin.trim();
+    const normalizedMasterKey = ownerCreationData.masterKey.trim().toUpperCase();
+    const normalizedEmail = ownerCreationData.email.trim().toLowerCase();
+
+    if (!normalizedMasterKey) {
+      alert('Informe a chave mestra de ativacao.');
       return;
     }
 
-    if (!ownerCreationData.name || ownerCreationData.pin.length !== 4 || !ownerCreationData.password) {
-      alert('Preencha os campos obrigatórios (Nome, Senha e PIN de 4 dígitos)');
+    if (!ownerName || !companyName || !password || pin.length !== 4) {
+      alert('Preencha os campos obrigatorios (Nome, Empresa, Senha e PIN de 4 digitos).');
       return;
     }
 
-    const ownerId = 'owner-' + Date.now();
-    // Usar a chave ou parte dela como enterpriseId ou pedir pro dono criar (vamos usar o id da empresa que ele quer)
-    const enterpriseIdForNewAccount = ownerCreationData.companyName.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substring(2, 5);
-    
-    // 1. Criar Lojas baseadas nos locais informados
-    const shopIds: string[] = [];
-    for (const loc of ownerCreationData.locations) {
-      if (!loc.trim()) continue;
-      const shopId = 'shop-' + Math.random().toString(36).substr(2, 9);
-      const newShop: Shop = {
-        id: shopId,
-        enterpriseId: enterpriseIdForNewAccount,
-        name: ownerCreationData.companyName + ' - ' + loc,
-        regionId: 'default',
-        settings: { name: ownerCreationData.companyName }
-      };
-      await firebaseService.saveItem('shops', shopId, newShop);
-      
-      // Adicionar mesas padrão (40 mesas total, 20 por salão) para cada loja criada
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-p${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i,
-          status: 'free',
-          capacity: i <= 8 ? 2 : 4,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Salão Principal'
-        });
-      }
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-v${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i + 20,
-          status: 'free',
-          capacity: 2,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Varanda Gourmet'
-        });
-      }
+    setIsCreatingOwner(true);
 
-      shopIds.push(shopId);
-    }
+    const ownerId = `owner-${Date.now()}`;
+    const companySlug = companyName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 28);
+    const enterpriseIdForNewAccount = `${companySlug || 'empresa'}-${Math.random().toString(36).slice(2, 7)}`;
+    const now = Date.now();
 
-    // Se nenhum local foi preenchido, cria pelo menos uma loja padrão
-    if (shopIds.length === 0) {
-      const shopId = 'shop-1';
-      await firebaseService.saveItem('shops', shopId, {
-        id: shopId,
+    try {
+      const keyConsume = await firebaseService.consumeMasterKey(normalizedMasterKey, {
+        usedBy: ownerId,
         enterpriseId: enterpriseIdForNewAccount,
-        name: ownerCreationData.companyName || 'Minha Loja',
-        regionId: 'default',
-        settings: { name: ownerCreationData.companyName || 'Minha Loja' }
+        deviceId: localStorage.getItem('rm_device_id') || undefined,
       });
 
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-p${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i,
-          status: 'free',
-          capacity: i <= 8 ? 2 : 4,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Salão Principal'
-        });
+      if (!keyConsume.ok) {
+        const reasonMap: Record<string, string> = {
+          invalid_key: 'Chave mestra invalida.',
+          already_used: 'Esta chave ja foi utilizada.',
+          expired_key: 'Esta chave expirou.',
+          revoked_key: 'Esta chave foi revogada.',
+          empty_key: 'Informe a chave mestra.',
+          consume_failed: 'Falha ao validar a chave. Tente novamente.',
+        };
+        alert(reasonMap[keyConsume.reason] || 'Falha ao validar a chave mestra.');
+        return;
       }
-      for (let i = 1; i <= 20; i++) {
-        const tableId = `t-${shopId}-v${i}`;
-        await firebaseService.saveItem('tables', tableId, {
-          id: tableId,
-          enterpriseId: enterpriseIdForNewAccount,
-          shopId: shopId,
-          number: i + 20,
-          status: 'free',
-          capacity: 2,
-          position: { x: ((i-1) % 5) * 160 + 80, y: Math.floor((i-1) / 5) * 140 + 80 },
-          area: 'Varanda Gourmet'
-        });
-      }
-      shopIds.push(shopId);
-    }
 
-    if (ownerCreationData.companyName) {
-      await firebaseService.saveItem('settings', 'company', { 
-        name: ownerCreationData.companyName,
+      const locations = ownerCreationData.locations
+        .map((loc) => loc.trim())
+        .filter((loc, index, arr) => !!loc && arr.indexOf(loc) === index);
+
+      const shopIds: string[] = [];
+      const shopsToCreate = locations.length > 0 ? locations : ['Matriz'];
+
+      for (const loc of shopsToCreate) {
+        const shopId = `shop-${Math.random().toString(36).slice(2, 11)}`;
+        const newShop: Shop = {
+          id: shopId,
+          enterpriseId: enterpriseIdForNewAccount,
+          companyId: enterpriseIdForNewAccount,
+          name: `${companyName} - ${loc}`,
+          regionId: 'default',
+          settings: { name: companyName }
+        };
+        await firebaseService.saveItem('shops', shopId, newShop);
+
+        for (let i = 1; i <= 20; i++) {
+          const tableId = `t-${shopId}-p${i}`;
+          await firebaseService.saveItem('tables', tableId, {
+            id: tableId,
+            enterpriseId: enterpriseIdForNewAccount,
+            companyId: enterpriseIdForNewAccount,
+            shopId,
+            number: i,
+            status: 'free',
+            capacity: i <= 8 ? 2 : 4,
+            position: { x: ((i - 1) % 5) * 160 + 80, y: Math.floor((i - 1) / 5) * 140 + 80 },
+            area: 'Salao Principal'
+          });
+        }
+
+        for (let i = 1; i <= 20; i++) {
+          const tableId = `t-${shopId}-v${i}`;
+          await firebaseService.saveItem('tables', tableId, {
+            id: tableId,
+            enterpriseId: enterpriseIdForNewAccount,
+            companyId: enterpriseIdForNewAccount,
+            shopId,
+            number: i + 20,
+            status: 'free',
+            capacity: 2,
+            position: { x: ((i - 1) % 5) * 160 + 80, y: Math.floor((i - 1) / 5) * 140 + 80 },
+            area: 'Varanda Gourmet'
+          });
+        }
+
+        shopIds.push(shopId);
+      }
+
+      await firebaseService.saveItem('settings', 'company', {
+        enterpriseId: enterpriseIdForNewAccount,
+        companyId: enterpriseIdForNewAccount,
+        name: companyName,
         cnpj: ownerCreationData.taxId,
-        recoveryEmail: ownerCreationData.email,
-        shopPassword: ownerCreationData.password 
+        recoveryEmail: normalizedEmail,
+        shopPassword: password,
+        createdAt: now,
       } as any);
+
+      const newOwner: Staff = {
+        id: ownerId,
+        enterpriseId: enterpriseIdForNewAccount,
+        companyId: enterpriseIdForNewAccount,
+        name: ownerName,
+        role: 'owner',
+        active: true,
+        pin,
+        assignedShopIds: shopIds,
+        email: normalizedEmail,
+        phone: ownerCreationData.taxId
+      } as any;
+
+      await firebaseService.saveItem('staff', ownerId, newOwner);
+      await firebaseService.saveItem('enterprises', enterpriseIdForNewAccount, {
+        id: enterpriseIdForNewAccount,
+        name: companyName,
+        ownerId,
+        owners: [ownerId],
+        regions: [],
+        createdAt: now,
+      } as any);
+
+      setIsCreateOwnerModalOpen(false);
+      setOwnerCreationData({
+        masterKey: '',
+        name: '',
+        email: '',
+        password: '',
+        pin: '',
+        companyName: '',
+        taxId: '',
+        locations: ['']
+      });
+      setEnterpriseId(enterpriseIdForNewAccount);
+      alert('Conta criada com sucesso! Voce ja esta conectado a sua nova empresa. Use seu PIN para entrar no sistema.');
+    } catch (error) {
+      console.error('Falha ao criar conta de dono:', error);
+      alert('Falha ao criar a conta. Se a chave ja foi consumida, contate o suporte para auditoria.');
+    } finally {
+      setIsCreatingOwner(false);
     }
-
-    const newOwner: Staff = {
-      id: ownerId,
-      enterpriseId: enterpriseIdForNewAccount,
-      name: ownerCreationData.name,
-      role: 'owner',
-      active: true,
-      pin: ownerCreationData.pin,
-      assignedShopIds: shopIds,
-      email: ownerCreationData.email,
-      phone: ownerCreationData.taxId 
-    } as any;
-
-    await firebaseService.saveItem('staff', ownerId, newOwner);
-    
-    // Marcar chave como usada
-    await firebaseService.updateItem('masterKeys', validKey.id, {
-      used: true,
-      usedBy: ownerId,
-      enterpriseId: enterpriseIdForNewAccount
-    });
-    
-    setIsCreateOwnerModalOpen(false);
-    setOwnerCreationData({ 
-      masterKey: '',
-      name: '', 
-      email: '',
-      password: '',
-      pin: '', 
-      companyName: '',
-      taxId: '',
-      locations: ['']
-    });
-    setEnterpriseId(enterpriseIdForNewAccount);
-    alert('Conta criada com sucesso! Você já está conectado à sua nova empresa. Use seu PIN para entrar no sistema.');
   };
 
   const handleCreateIncident = () => {
@@ -4812,7 +4824,7 @@ Obrigado pela preferência!
                   <input 
                     type="password" 
                     value={ownerCreationData.masterKey}
-                    onChange={e => setOwnerCreationData({...ownerCreationData, masterKey: e.target.value})}
+                    onChange={e => setOwnerCreationData({...ownerCreationData, masterKey: e.target.value.toUpperCase()})}
                     className="w-full bg-white border-2 border-emerald-100 rounded-2xl pl-11 pr-4 py-3 font-black text-emerald-700 placeholder:text-emerald-200 outline-none focus:border-emerald-500 transition-all"
                     placeholder="code-XX"
                   />
@@ -4933,10 +4945,20 @@ Obrigado pela preferência!
 
           <button 
             onClick={handleCreateOwner}
+            disabled={isCreatingOwner}
             className="w-full bg-emerald-500 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-xl shadow-emerald-500/20 mt-10 flex items-center justify-center gap-3"
           >
-            <ShieldCheck className="w-6 h-6" />
-            Ativar Conta do Dono
+            {isCreatingOwner ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Processando...
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="w-6 h-6" />
+                Ativar Conta do Dono
+              </>
+            )}
           </button>
         </motion.div>
       </div>
@@ -8748,3 +8770,4 @@ function LegendItem({ color, label }: any) {
     </div>
   );
 }
+

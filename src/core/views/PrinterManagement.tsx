@@ -29,7 +29,7 @@ export const PrinterManagement: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   
   const currentUser = accountService.getCurrentUser();
-  const companyId = currentUser?.companyId || 'default';
+  const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
 
   const [newPrinter, setNewPrinter] = useState<Omit<Printer, 'id' | 'enterpriseId' | 'shopId' | 'status'>>({
     name: '',

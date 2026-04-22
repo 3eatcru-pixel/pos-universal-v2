@@ -26,6 +26,7 @@ import { cn, formatCurrency } from '../../../lib/utils';
 import { BarcodeScanner } from '../components/BarcodeScanner';
 import { Product } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';
+import { accountService } from '../../../core/services/accountService';
 
 export const MarketInventory: React.FC = () => {
   const [filter, setFilter] = useState('all');
@@ -39,6 +40,11 @@ export const MarketInventory: React.FC = () => {
   const [scannedBarcode, setScannedBarcode] = useState('');
   const [countQuantity, setCountQuantity] = useState<string>('');
   const [adjustType, setAdjustType] = useState<'add' | 'set'>('set');
+  const companyId =
+    accountService.getCurrentCompanyId() ||
+    localStorage.getItem('rm_enterprise_id') ||
+    'local-ent';
+  const shopId = localStorage.getItem('rm_selected_shop_id') || 'shop-1';
   
   const [newProduct, setNewProduct] = useState<Partial<Product>>({
     name: '',
@@ -48,17 +54,17 @@ export const MarketInventory: React.FC = () => {
     unit: 'un',
     barcode: '',
     active: true,
-    enterpriseId: 'default',
-    shopId: 'default'
+    enterpriseId: companyId,
+    shopId
   });
 
   useEffect(() => {
     loadProducts();
-  }, []);
+  }, [companyId]);
 
   const loadProducts = async () => {
     try {
-      const data = await firebaseService.getAllDocs('products');
+      const data = await firebaseService.getAllDocs('products', companyId);
       setProducts(data as Product[]);
     } catch (err) {
       console.error('Error loading inventory:', err);
@@ -116,8 +122,8 @@ export const MarketInventory: React.FC = () => {
         unit: 'un',
         barcode: '',
         active: true,
-        enterpriseId: 'default',
-        shopId: 'default'
+        enterpriseId: companyId,
+        shopId
       });
       loadProducts();
     } catch (err) {

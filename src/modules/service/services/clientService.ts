@@ -1,5 +1,21 @@
 import { ServiceClient } from '../types';
 
+function resolveEnterpriseId(): string {
+  try {
+    const currentUser = localStorage.getItem('pos_current_user')
+      ? JSON.parse(localStorage.getItem('pos_current_user')!)
+      : null;
+    return (
+      currentUser?.companyId ||
+      currentUser?.enterpriseId ||
+      localStorage.getItem('rm_enterprise_id') ||
+      'demo-enterprise'
+    );
+  } catch {
+    return localStorage.getItem('rm_enterprise_id') || 'demo-enterprise';
+  }
+}
+
 class ClientService {
   private clients: ServiceClient[] = [];
 
@@ -20,12 +36,7 @@ class ClientService {
   }
 
   private seedDemoData() {
-    const companyStr = localStorage.getItem('pos_companies');
-    let entId = 'demo-enterprise';
-    if (companyStr) {
-      const companies = JSON.parse(companyStr);
-      if (companies.length > 0) entId = companies[0].id;
-    }
+    const entId = resolveEnterpriseId();
 
     this.clients = [
       { id: 'cli-1', enterpriseId: entId, name: 'Lucas VIP', phone: '11999999999', email: 'lucas@vip.com', history: ['app-1'], createdAt: Date.now() - 5000000 },

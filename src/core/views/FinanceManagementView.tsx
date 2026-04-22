@@ -41,7 +41,7 @@ export const FinanceManagementView: React.FC<FinanceManagementViewProps> = ({ mo
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
 
   const currentUser = accountService.getCurrentUser();
-  const companyId = currentUser?.companyId || 'default';
+  const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
 
   useEffect(() => {
     loadTransactions();

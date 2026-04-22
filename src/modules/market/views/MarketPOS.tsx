@@ -47,6 +47,11 @@ export const MarketPOS: React.FC = () => {
   const [processingSale, setProcessingSale] = useState(false);
   const [saleSuccess, setSaleSuccess] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const enterpriseId =
+    accountService.getCurrentCompanyId() ||
+    localStorage.getItem('rm_enterprise_id') ||
+    'local-ent';
+  const shopId = localStorage.getItem('rm_selected_shop_id') || 'shop-1';
 
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
   const total = subtotal; 
@@ -56,17 +61,17 @@ export const MarketPOS: React.FC = () => {
 
   useEffect(() => {
     loadProducts();
-  }, []);
+  }, [enterpriseId]);
 
   const loadProducts = async () => {
     try {
-      const data = await firebaseService.getAllDocs('products');
+      const data = await firebaseService.getAllDocs('products', enterpriseId);
       if (data.length === 0) {
         const defaults: Product[] = [
-          { id: 'p1', name: 'Leite Integral 1L', price: 5.50, unit: 'un', barcode: '789123', active: true, category: 'Laticínios', enterpriseId: 'default', shopId: 'default', stock: 100 },
-          { id: 'p2', name: 'Pão de Forma', price: 8.90, unit: 'un', barcode: '789456', active: true, category: 'Padaria', enterpriseId: 'default', shopId: 'default', stock: 50 },
-          { id: 'p3', name: 'Alcatra (kg)', price: 45.90, unit: 'kg', barcode: '789789', active: true, category: 'Açougue', enterpriseId: 'default', shopId: 'default', stock: 20 },
-          { id: 'p4', name: 'Maçã Fuji (Kg)', price: 9.90, unit: 'kg', barcode: '789000', active: true, category: 'Hortifruti', enterpriseId: 'default', shopId: 'default', stock: 35 },
+          { id: `${enterpriseId}-p1`, name: 'Leite Integral 1L', price: 5.50, unit: 'un', barcode: '789123', active: true, category: 'Laticinios', enterpriseId, shopId, stock: 100 },
+          { id: `${enterpriseId}-p2`, name: 'Pao de Forma', price: 8.90, unit: 'un', barcode: '789456', active: true, category: 'Padaria', enterpriseId, shopId, stock: 50 },
+          { id: `${enterpriseId}-p3`, name: 'Alcatra (kg)', price: 45.90, unit: 'kg', barcode: '789789', active: true, category: 'Acougue', enterpriseId, shopId, stock: 20 },
+          { id: `${enterpriseId}-p4`, name: 'Maca Fuji (Kg)', price: 9.90, unit: 'kg', barcode: '789000', active: true, category: 'Hortifruti', enterpriseId, shopId, stock: 35 },
         ];
         setProducts(defaults);
       } else {
@@ -133,8 +138,8 @@ export const MarketPOS: React.FC = () => {
         description: `Venda de ${cart.length} itens`,
         timestamp: Date.now(),
         status: 'completed',
-        enterpriseId: 'default',
-        shopId: 'default'
+        enterpriseId,
+        shopId
       };
       await firebaseService.addItem('transactions', transaction);
 
@@ -577,3 +582,5 @@ export const MarketPOS: React.FC = () => {
     </div>
   );
 };
+
+

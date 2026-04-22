@@ -13,7 +13,8 @@ import {
   updateDoc,
   deleteDoc,
   Timestamp,
-  writeBatch
+  writeBatch,
+  runTransaction
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { 
@@ -303,6 +304,53 @@ export const firebaseService = {
   placeOrder: async (order: Order) => {
     const { id, ...data } = order;
     await setDoc(doc(db, 'orders', id), withTenantMetadata('orders', data));
+  },
+
+  consumeMasterKey: async (rawKey: string, context: { usedBy: string; enterpriseId: string; deviceId?: string }) => {
+    const normalizedKey = rawKey.trim().toUpperCase();
+    if (!normalizedKey) {
+      return { ok: false, reason: 'empty_key' as const };
+    }
+
+    try {
+      const keyQuery = query(collection(db, 'masterKeys'), where('key', '==', normalizedKey), limit(1));
+      const keySnapshot = await getDocs(keyQuery);
+
+      if (keySnapshot.empty) {
+        return { ok: false, reason: 'invalid_key' as const };
+      }
+
+      const keyDoc = keySnapshot.docs[0];
+      const keyRef = doc(db, 'masterKeys', keyDoc.id);
+      const now = Date.now();
+
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(keyRef);
+        if (!snap.exists()) {
+          throw new Error('invalid_key');
+        }
+
+        const data = snap.data() as any;
+        if (data.revokedAt) throw new Error('revoked_key');
+        if (data.used) throw new Error('already_used');
+        if (data.expiresAt && data.expiresAt < now) throw new Error('expired_key');
+
+        tx.update(keyRef, {
+          used: true,
+          usedBy: context.usedBy,
+          usedAt: now,
+          enterpriseId: context.enterpriseId,
+          companyId: context.enterpriseId,
+          usedByDevice: context.deviceId || null,
+          updatedAt: now,
+        });
+      });
+
+      return { ok: true, keyId: keyDoc.id as string };
+    } catch (error: any) {
+      const reason = typeof error?.message === 'string' ? error.message : 'consume_failed';
+      return { ok: false, reason: reason as 'invalid_key' | 'already_used' | 'expired_key' | 'revoked_key' | 'consume_failed' };
+    }
   },
 
   closeOrder: async (orderId: string, payments: any[], paymentMethod: string) => {

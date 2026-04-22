@@ -48,7 +48,7 @@ export const MarketSectionView: React.FC<MarketSectionViewProps> = ({ type }) =>
   ]);
 
   const currentUser = accountService.getCurrentUser();
-  const companyId = currentUser?.companyId || 'default';
+  const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
 
   useEffect(() => {
     loadStaff();

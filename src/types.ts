@@ -478,4 +478,10 @@ export interface MasterKey {
   used: boolean;
   usedBy?: string; // ownerId
   enterpriseId?: string;
+  companyId?: string;
+  expiresAt?: number;
+  usedAt?: number;
+  updatedAt?: number;
+  revokedAt?: number;
+  usedByDevice?: string | null;
 }

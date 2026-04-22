@@ -23,6 +23,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { ServiceItem, Staff, ServiceResource } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';
+import { accountService } from '../../../core/services/accountService';
 
 type ManagementTab = 'services' | 'professionals' | 'resources' | 'clients';
 
@@ -33,18 +34,22 @@ export const ServiceManagement: React.FC = () => {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [resources, setResources] = useState<ServiceResource[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+  const enterpriseId =
+    accountService.getCurrentCompanyId() ||
+    localStorage.getItem('rm_enterprise_id') ||
+    'local-ent';
 
   useEffect(() => {
     loadData();
-  }, [activeTab]);
+  }, [activeTab, enterpriseId]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       const [servicesData, staffData, resourcesData] = await Promise.all([
-        firebaseService.getAllDocs('services'),
-        firebaseService.getAllDocs('staff'),
-        firebaseService.getAllDocs('resources')
+        firebaseService.getAllDocs('services', enterpriseId),
+        firebaseService.getAllDocs('staff', enterpriseId),
+        firebaseService.getAllDocs('resources', enterpriseId)
       ]);
       setServices(servicesData as ServiceItem[]);
       setStaff((staffData as Staff[]).filter(s => s.role === 'Professional' || s.role === 'Waiter')); // Simplified

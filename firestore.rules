@@ -73,7 +73,19 @@ service cloud.firestore {
     }
 
     match /masterKeys/{keyId} {
-      allow get, list, create, update, delete: if isAdmin() && isValidId(keyId);
+      allow get, list: if isValidId(keyId) && (isAdmin() || isSignedIn());
+      allow create, delete: if isValidId(keyId) && isAdmin();
+      allow update: if isValidId(keyId) && (
+        isAdmin() ||
+        (
+          isSignedIn() &&
+          !resource.data.used &&
+          !resource.data.keys().hasAny(['revokedAt']) &&
+          request.resource.data.used == true &&
+          request.resource.data.key == resource.data.key &&
+          request.resource.data.createdAt == resource.data.createdAt
+        )
+      );
     }
 
     match /enterprises/{entId} {

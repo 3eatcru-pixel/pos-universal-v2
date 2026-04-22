@@ -85,7 +85,7 @@ export const StaffScheduleView: React.FC<StaffScheduleViewProps> = ({ module }) 
   const [loading, setLoading] = useState(true);
 
   const currentUser = accountService.getCurrentUser();
-  const companyId = currentUser?.companyId || 'default';
+  const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
   const config = moduleConfigs[module] || moduleConfigs.restaurant;
 
   useEffect(() => {
