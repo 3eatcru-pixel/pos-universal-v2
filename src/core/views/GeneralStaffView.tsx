@@ -33,6 +33,7 @@ import { cn } from '../../lib/utils';
 import { Staff, PerformanceEvent, RolePermissions, View } from '../../types';
 import { firebaseService } from '../../services/firebaseService';
 import { accountService } from '../services/accountService';
+import { MOCK_PERMISSIONS } from '../../mockData';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -57,6 +58,11 @@ export const GeneralStaffView: React.FC<StaffManagementViewProps> = ({ module })
 
   const currentUser = accountService.getCurrentUser();
   const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
+  const currentRolePermissions =
+    roles.find(r => r.role === currentUser?.role) ||
+    MOCK_PERMISSIONS.find(r => r.role === currentUser?.role) ||
+    null;
+  const canManageStaff = currentUser?.role === 'dev' || !!currentRolePermissions?.actions.canManageStaff;
 
   useEffect(() => {
     loadData();
@@ -81,6 +87,10 @@ export const GeneralStaffView: React.FC<StaffManagementViewProps> = ({ module })
   };
 
   const handleDeleteStaff = async (id: string) => {
+    if (!canManageStaff) {
+      alert('Sem permissão para remover colaboradores.');
+      return;
+    }
     if (!confirm('Tem certeza que deseja remover este colaborador permanentemente?')) return;
     try {
       await firebaseService.deleteItem('staff', id);
@@ -93,6 +103,10 @@ export const GeneralStaffView: React.FC<StaffManagementViewProps> = ({ module })
 
   const handleSaveRole = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canManageStaff) {
+      alert('Sem permissão para gerenciar cargos e permissões.');
+      return;
+    }
     const formData = new FormData(e.currentTarget);
     const roleId = formData.get('role') as string;
     
@@ -130,6 +144,10 @@ export const GeneralStaffView: React.FC<StaffManagementViewProps> = ({ module })
 
   const handleSaveStaff = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canManageStaff) {
+      alert('Sem permissão para cadastrar ou editar colaboradores.');
+      return;
+    }
     const formData = new FormData(e.currentTarget);
     const staffId = selectedStaff?.id || `staff-${Math.random().toString(36).substr(2, 9)}`;
     
@@ -163,6 +181,10 @@ export const GeneralStaffView: React.FC<StaffManagementViewProps> = ({ module })
 
   const handleAddPerformanceEvent = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canManageStaff) {
+      alert('Sem permissão para registrar eventos de performance.');
+      return;
+    }
     if (!selectedStaff) return;
     const formData = new FormData(e.currentTarget);
     const eventId = `perf-${Math.random().toString(36).substr(2, 9)}`;
@@ -412,10 +434,14 @@ export const GeneralStaffView: React.FC<StaffManagementViewProps> = ({ module })
                              <MoreHorizontal className="w-5 h-5" />
                           </button>
                           <button 
-                            onClick={async () => {
-                              if (confirm('Deletar este cargo?')) await firebaseService.deleteItem('rolePermissions', role.role);
-                              loadData();
-                            }}
+                                  onClick={async () => {
+                                    if (!canManageStaff) {
+                                      alert('Sem permissão para remover cargos.');
+                                      return;
+                                    }
+                                    if (confirm('Deletar este cargo?')) await firebaseService.deleteItem('rolePermissions', role.role);
+                                    loadData();
+                                  }}
                             className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
                           >
                              <Trash2 className="w-5 h-5" />

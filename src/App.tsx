@@ -1001,8 +1001,17 @@ export default function App() {
         meshNetwork.broadcast('order:update', orderData);
         meshNetwork.broadcast('table:update', { id: table.id, status: 'occupied', currentOrderId: orderId });
       } else {
-        await firebaseService.saveItem('orders', orderId, orderData);
-        await firebaseService.updateTableStatus(table.id, 'occupied', orderId);
+        try {
+          await firebaseService.openTableWithOrderAtomic(table.id, orderData);
+        } catch (err: any) {
+          const msg = String(err?.message || '');
+          if (msg.includes('table_unavailable')) {
+            alert('Mesa já foi ocupada por outro terminal. Atualize a tela.');
+          } else {
+            alert('Não foi possível abrir a mesa neste momento.');
+          }
+          return;
+        }
       }
       
       setSelectedTable({ ...table, status: 'occupied', currentOrderId: orderId });
@@ -1241,9 +1250,20 @@ Obrigado pela preferência!
       meshNetwork.broadcast('order:update', orderData);
       if (!isTakeaway) meshNetwork.broadcast('table:update', { id: selectedTable.id, status: 'occupied', currentOrderId: orderId });
     } else {
-      await firebaseService.saveItem('orders', orderId, orderData);
-      if (!isTakeaway) {
-        await firebaseService.updateTableStatus(selectedTable.id, 'occupied', orderId);
+      try {
+        if (isTakeaway) {
+          await firebaseService.saveItem('orders', orderId, orderData);
+        } else {
+          await firebaseService.upsertOrderForTableAtomic(orderData);
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || '');
+        if (msg.includes('table_lock_mismatch') || msg.includes('table_unavailable')) {
+          alert('Conflito de mesa detectado. Reabra a mesa para sincronizar e tente novamente.');
+        } else {
+          alert('Erro ao salvar pedido no servidor.');
+        }
+        return;
       }
     }
 
@@ -1376,9 +1396,15 @@ Obrigado pela preferência!
         setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'free', currentOrderId: undefined } : t));
       } else {
         if (order) {
-          await firebaseService.updateItem('orders', order.id, { status: 'cancelled' });
+          try {
+            await firebaseService.completeOrderAndReleaseTableAtomic(order.id, { status: 'cancelled' }, tableId);
+          } catch {
+            alert('Conflito ao cancelar mesa. Atualize os dados e tente novamente.');
+            return;
+          }
+        } else {
+          await firebaseService.updateTableStatus(tableId, 'free', null);
         }
-        await firebaseService.updateTableStatus(tableId, 'free', null);
       }
       setSelectedTable(null);
       setCart([]);
@@ -1400,8 +1426,12 @@ Obrigado pela preferência!
           setOrders(prev => prev.map(o => o.id === order?.id ? { ...o, status: 'cancelled', items: updatedItems } : o));
           setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'free', currentOrderId: undefined } : t));
         } else if (order) {
-          await firebaseService.updateItem('orders', order.id, { status: 'cancelled', items: updatedItems });
-          await firebaseService.updateTableStatus(tableId, 'free', null);
+          try {
+            await firebaseService.completeOrderAndReleaseTableAtomic(order.id, { status: 'cancelled', items: updatedItems }, tableId);
+          } catch {
+            alert('Conflito ao cancelar conta da mesa. Atualize os dados e tente novamente.');
+            return;
+          }
         }
         setSelectedTable(null);
         setCart([]);
@@ -1494,9 +1524,15 @@ Obrigado pela preferência!
         meshNetwork.broadcast('table:update', { id: order.tableId, status: 'free', currentOrderId: undefined });
       }
     } else {
-      await firebaseService.updateItem('orders', orderId, updates);
-      if (order.tableId && order.tableId !== 'takeaway') {
-        await firebaseService.updateTableStatus(order.tableId, 'free');
+      try {
+        if (order.tableId && order.tableId !== 'takeaway') {
+          await firebaseService.completeOrderAndReleaseTableAtomic(orderId, updates, order.tableId);
+        } else {
+          await firebaseService.updateItem('orders', orderId, updates);
+        }
+      } catch {
+        alert('Conflito ao finalizar pagamento. Atualize os dados e tente novamente.');
+        return;
       }
     }
     
@@ -1947,7 +1983,7 @@ Obrigado pela preferência!
     if (newStatus === 'ready') {
       const table = tables.find(t => t.id === order.tableId);
       if (table) {
-        await firebaseService.updateItem('tables', table.id, { hasReadyItems: true });
+        await firebaseService.setTableReadyFlagAtomic(table.id, order.id, true);
         await firebaseService.addItem('notifications', {
           shopId: (selectedShopId || 'shop-1'),
           message: `🔔 Pedido pronto para a Mesa 0${table.number}`,
@@ -1960,7 +1996,7 @@ Obrigado pela preferência!
     }
 
     if (newStatus === 'delivered') {
-      await firebaseService.updateItem('tables', order.tableId, { hasReadyItems: false });
+      await firebaseService.setTableReadyFlagAtomic(order.tableId, order.id, false);
     }
   };
 
@@ -2012,7 +2048,7 @@ Obrigado pela preferência!
 
     const table = tables.find(t => t.id === order.tableId);
     if (anyReady && order.tableId !== 'takeaway') {
-      await firebaseService.updateItem('tables', order.tableId, { hasReadyItems: true });
+      await firebaseService.setTableReadyFlagAtomic(order.tableId, order.id, true);
     }
 
     await firebaseService.addItem('notifications', {
@@ -2039,14 +2075,18 @@ Obrigado pela preferência!
     const updatedItems = order.items.map(i => i.id === itemId ? { ...i, status: 'delivered' as ItemStatus } : i);
     const allDelivered = updatedItems.every(i => i.status === 'delivered' || i.status === 'voided');
 
+    if (allDelivered && order.tableId !== 'takeaway') {
+      await firebaseService.completeOrderAndReleaseTableAtomic(orderId, {
+        items: updatedItems,
+        status: 'delivered'
+      }, order.tableId);
+      return;
+    }
+
     await firebaseService.updateItem('orders', orderId, {
       items: updatedItems,
-      status: allDelivered ? 'delivered' : order.status
+      status: order.status
     });
-
-    if (allDelivered && order.tableId !== 'takeaway') {
-      await firebaseService.updateTableStatus(order.tableId, 'free');
-    }
   };
   const handleDeliverOrder = (orderId: string) => {
     handleOrderStatusChange(orderId, 'delivered');
@@ -3296,7 +3336,7 @@ Obrigado pela preferência!
        if (existingOrder) {
           if (cart.length > 0 && confirm("Esta mesa já tem um pedido ativo. Deseja mesclar seu carrinho atual com o pedido da mesa?")) {
              const mergedItems = [...existingOrder.items, ...cart.map(i => ({ ...i, sentToKitchen: false }))];
-             await firebaseService.updateItem('orders', existingOrder.id, { items: mergedItems });
+             await firebaseService.upsertOrderForTableAtomic({ ...existingOrder, items: mergedItems });
              setCart(mergedItems);
           } else {
              setCart(existingOrder.items);
@@ -3319,8 +3359,12 @@ Obrigado pela preferência!
          subtotal: 0,
          total: 0
        };
-       await firebaseService.saveItem('orders', orderId, newOrder);
-       await firebaseService.updateTableStatus(table.id, 'occupied', orderId);
+       try {
+         await firebaseService.openTableWithOrderAtomic(table.id, newOrder);
+       } catch {
+         alert('Mesa não está mais disponível. Atualize a tela e tente novamente.');
+         return;
+       }
     }
     setSelectedTable(table);
   };

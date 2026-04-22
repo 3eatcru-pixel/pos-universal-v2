@@ -17,19 +17,26 @@ import {
   Radio
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Printer, PrinterType } from '../../types';
+import { Printer, PrinterType, RolePermissions } from '../../types';
 import { firebaseService } from '../../services/firebaseService';
 import { accountService } from '../services/accountService';
 import { cn } from '../../lib/utils';
+import { MOCK_PERMISSIONS } from '../../mockData';
 
 export const PrinterManagement: React.FC = () => {
   const [printers, setPrinters] = useState<Printer[]>([]);
+  const [roles, setRoles] = useState<RolePermissions[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
   const currentUser = accountService.getCurrentUser();
   const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
+  const currentRolePermissions =
+    roles.find(r => r.role === currentUser?.role) ||
+    MOCK_PERMISSIONS.find(r => r.role === currentUser?.role) ||
+    null;
+  const canManagePrinters = currentUser?.role === 'dev' || !!currentRolePermissions?.actions.canManageInventory;
 
   const [newPrinter, setNewPrinter] = useState<Omit<Printer, 'id' | 'enterpriseId' | 'shopId' | 'status'>>({
     name: '',
@@ -47,8 +54,12 @@ export const PrinterManagement: React.FC = () => {
   const loadPrinters = async () => {
     setLoading(true);
     try {
-      const data = await firebaseService.getAllDocs('printers', companyId);
+      const [data, roleData] = await Promise.all([
+        firebaseService.getAllDocs('printers', companyId),
+        firebaseService.getAllDocs('rolePermissions', companyId)
+      ]);
       setPrinters(data as Printer[]);
+      setRoles(roleData as unknown as RolePermissions[]);
     } catch (error) {
       console.error('Failed to load printers:', error);
     } finally {
@@ -58,6 +69,10 @@ export const PrinterManagement: React.FC = () => {
 
   const handleAddPrinter = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManagePrinters) {
+      alert('Sem permissão para gerenciar impressoras.');
+      return;
+    }
     const id = `ptr-${Math.random().toString(36).substr(2, 9)}`;
     
     const printerData: Printer = {
@@ -94,6 +109,10 @@ export const PrinterManagement: React.FC = () => {
   };
 
   const handleDeletePrinter = async (id: string) => {
+    if (!canManagePrinters) {
+      alert('Sem permissão para remover impressoras.');
+      return;
+    }
     if (confirm('Deseja excluir esta impressora?')) {
       try {
         await firebaseService.deleteItem('printers', id);
@@ -105,6 +124,10 @@ export const PrinterManagement: React.FC = () => {
   };
 
   const toggleDefault = async (printer: Printer) => {
+    if (!canManagePrinters) {
+      alert('Sem permissão para alterar impressora padrão.');
+      return;
+    }
     try {
       // Unset current default of same type
       const currentDefault = printers.find(p => p.type === printer.type && p.isDefault);

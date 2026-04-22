@@ -27,9 +27,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
-import { Supplier, SupplierContract } from '../../types';
+import { Supplier, SupplierContract, RolePermissions } from '../../types';
 import { firebaseService } from '../../services/firebaseService';
 import { accountService } from '../services/accountService';
+import { MOCK_PERMISSIONS } from '../../mockData';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -40,6 +41,7 @@ interface SupplierManagementViewProps {
 export const SupplierManagementView: React.FC<SupplierManagementViewProps> = ({ module }) => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [contracts, setContracts] = useState<SupplierContract[]>([]);
+  const [roles, setRoles] = useState<RolePermissions[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
@@ -48,6 +50,11 @@ export const SupplierManagementView: React.FC<SupplierManagementViewProps> = ({ 
 
   const currentUser = accountService.getCurrentUser();
   const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
+  const currentRolePermissions =
+    roles.find(r => r.role === currentUser?.role) ||
+    MOCK_PERMISSIONS.find(r => r.role === currentUser?.role) ||
+    null;
+  const canManageSuppliers = currentUser?.role === 'dev' || !!currentRolePermissions?.actions.canManageInventory;
 
   useEffect(() => {
     loadData();
@@ -62,6 +69,8 @@ export const SupplierManagementView: React.FC<SupplierManagementViewProps> = ({ 
       ]);
       setSuppliers(supps as Supplier[]);
       setContracts(conts as SupplierContract[]);
+      const roleData = await firebaseService.getAllDocs('rolePermissions', companyId);
+      setRoles(roleData as unknown as RolePermissions[]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -71,6 +80,10 @@ export const SupplierManagementView: React.FC<SupplierManagementViewProps> = ({ 
 
   const handleSaveSupplier = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canManageSuppliers) {
+      alert('Sem permissão para gerenciar fornecedores.');
+      return;
+    }
     const formData = new FormData(e.currentTarget);
     const id = `supp-${Math.random().toString(36).substr(2, 9)}`;
     const newSupp: Supplier = {

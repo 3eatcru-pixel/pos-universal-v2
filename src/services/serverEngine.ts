@@ -10,9 +10,12 @@ class ServerEngine {
   private node: ServerNode | null = null;
   private eventHistory: SyncEvent[] = [];
   private autoBackupInterval: any = null;
+  private uptimeInterval: any = null;
+  private unsubscribeSync: (() => void) | null = null;
 
   public async start(companyId: string) {
     console.log(`[ServerEngine] Initializing Kernel for company: ${companyId}`);
+    this.stop();
     
     this.node = {
       id: `SRV-${Math.random().toString(36).substring(7).toUpperCase()}`,
@@ -24,14 +27,29 @@ class ServerEngine {
     };
 
     // Start UI update intervals
-    setInterval(() => {
+    this.uptimeInterval = setInterval(() => {
       if (this.node) this.node.uptime += 1;
     }, 1000);
 
     this.startAutoBackup();
     
     // Listen for all mesh traffic to act as authority
-    meshNetwork.setOnSync((event) => this.processEvent(event));
+    this.unsubscribeSync = meshNetwork.setOnSync((event) => this.processEvent(event));
+  }
+
+  public stop() {
+    if (this.autoBackupInterval) {
+      clearInterval(this.autoBackupInterval);
+      this.autoBackupInterval = null;
+    }
+    if (this.uptimeInterval) {
+      clearInterval(this.uptimeInterval);
+      this.uptimeInterval = null;
+    }
+    if (this.unsubscribeSync) {
+      this.unsubscribeSync();
+      this.unsubscribeSync = null;
+    }
   }
 
   private async processEvent(event: SyncEvent) {

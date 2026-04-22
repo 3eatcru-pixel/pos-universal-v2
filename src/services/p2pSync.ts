@@ -1,6 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { dbLocal } from './db';
-import { DeviceRole, DeviceMode, SyncEvent, SyncMode } from '../core/types';
+import { DeviceRole, SyncEvent, SyncMode } from '../core/types';
 import { MeshSyncEngine, PacketDedupCache } from '../engine/mesh';
 
 /**
@@ -21,6 +21,25 @@ class MeshNetwork {
   constructor() {
     this.meshEngine = new MeshSyncEngine(this.deviceId);
     this.init();
+  }
+
+  private getCurrentUser() {
+    try {
+      const raw = localStorage.getItem('pos_current_user');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private isValidSyncEvent(data: SyncEvent | null | undefined): data is SyncEvent {
+    if (!data) return false;
+    if (!data.id || !data.type || !data.companyId) return false;
+    if (typeof data.timestamp !== 'number') return false;
+    const now = Date.now();
+    const maxSkewMs = 1000 * 60 * 60 * 24;
+    if (Math.abs(now - data.timestamp) > maxSkewMs) return false;
+    return true;
   }
 
   public setRole(role: DeviceRole) {
@@ -59,9 +78,7 @@ class MeshNetwork {
     });
 
     this.socket.on('connect', () => {
-      const user = localStorage.getItem('pos_current_user')
-        ? JSON.parse(localStorage.getItem('pos_current_user')!)
-        : null;
+      const user = this.getCurrentUser();
       if (user?.companyId) {
         this.socket?.emit('mesh:join', { companyId: user.companyId, deviceId: this.deviceId });
       }
@@ -73,17 +90,16 @@ class MeshNetwork {
     });
 
     this.socket.on('mesh:sync', (data: SyncEvent) => {
+      if (!this.isValidSyncEvent(data)) return;
       if (this.dedup.has(data.id)) return;
       this.dedup.add(data.id);
       this.meshEngine.registerIncoming({
         ...data,
       });
 
-      const user = localStorage.getItem('pos_current_user') 
-        ? JSON.parse(localStorage.getItem('pos_current_user')!)
-        : null;
+      const user = this.getCurrentUser();
       
-      const companyId = user?.companyId || 'anonymous';
+      const companyId = user?.companyId || '';
       const userRole = user?.role || 'operator';
       
       if (userRole === 'dev' || data.companyId === companyId) {
@@ -101,9 +117,11 @@ class MeshNetwork {
   }
 
   public emitEvent(type: string, payload: any) {
-    const companyId = localStorage.getItem('pos_current_user') 
-      ? JSON.parse(localStorage.getItem('pos_current_user')!).companyId 
-      : 'anonymous';
+    const companyId = this.getCurrentUser()?.companyId || '';
+    if (!companyId) {
+      console.warn('[MeshNetwork] Event blocked: missing companyId context.');
+      return;
+    }
 
     const event: SyncEvent = {
       id: `ev-${Date.now()}-${this.deviceId}`,

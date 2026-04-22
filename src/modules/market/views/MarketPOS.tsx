@@ -131,6 +131,13 @@ export const MarketPOS: React.FC = () => {
 
     setProcessingSale(true);
     try {
+      await firebaseService.decrementProductStocksAtomic(
+        cart
+          .filter(item => item.stock !== undefined)
+          .map(item => ({ productId: item.id, quantity: item.quantity })),
+        { enterpriseId, minStock: 0 }
+      );
+
       const transaction: Omit<Transaction, 'id'> = {
         type: 'income',
         amount: total,
@@ -143,13 +150,6 @@ export const MarketPOS: React.FC = () => {
       };
       await firebaseService.addItem('transactions', transaction);
 
-      for (const item of cart) {
-        if (item.stock !== undefined) {
-          const newStock = item.stock - item.quantity;
-          await firebaseService.saveItem('products', item.id, { ...item, stock: newStock });
-        }
-      }
-
       setSaleSuccess(true);
       setTimeout(() => {
         setCart([]);
@@ -161,7 +161,12 @@ export const MarketPOS: React.FC = () => {
 
     } catch (err) {
       console.error('Error finalizing sale:', err);
-      alert('Erro ao processar venda');
+      const msg = String((err as any)?.message || '');
+      if (msg.includes('insufficient_stock')) {
+        alert('Estoque insuficiente para concluir a venda. Atualize o carrinho e tente novamente.');
+      } else {
+        alert('Erro ao processar venda');
+      }
     } finally {
       setProcessingSale(false);
     }

@@ -300,6 +300,219 @@ export const firebaseService = {
     }
   },
 
+  adjustProductStockAtomic: async (
+    productId: string,
+    delta: number,
+    context?: { enterpriseId?: string; minStock?: number }
+  ) => {
+    if (!productId || !Number.isFinite(delta) || delta === 0) return null;
+    try {
+      return await runTransaction(db, async (tx) => {
+        const ref = doc(db, 'products', productId);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) {
+          throw new Error(`product_not_found:${productId}`);
+        }
+        const data = snap.data() as any;
+        if (context?.enterpriseId && data?.enterpriseId && data.enterpriseId !== context.enterpriseId) {
+          throw new Error(`tenant_mismatch:${productId}`);
+        }
+        const minStock = context?.minStock ?? 0;
+        const currentStock = typeof data?.stock === 'number' ? data.stock : 0;
+        const nextStock = currentStock + delta;
+        if (nextStock < minStock) {
+          throw new Error(`insufficient_stock:${productId}`);
+        }
+        tx.update(ref, { stock: nextStock, updatedAt: Date.now() });
+        return nextStock;
+      });
+    } catch (e: any) {
+      if (e?.code === 'permission-denied') {
+        handleFirestoreError(e, 'update', `products/${productId}`);
+      }
+      throw e;
+    }
+  },
+
+  decrementProductStocksAtomic: async (
+    items: { productId: string; quantity: number }[],
+    context?: { enterpriseId?: string; minStock?: number }
+  ) => {
+    const normalized = items
+      .filter(i => i.productId && Number.isFinite(i.quantity) && i.quantity > 0);
+    if (normalized.length === 0) return;
+
+    try {
+      await runTransaction(db, async (tx) => {
+        const minStock = context?.minStock ?? 0;
+        const refs = normalized.map(i => doc(db, 'products', i.productId));
+        const snaps = await Promise.all(refs.map(r => tx.get(r)));
+
+        snaps.forEach((snap, idx) => {
+          if (!snap.exists()) {
+            throw new Error(`product_not_found:${normalized[idx].productId}`);
+          }
+          const data = snap.data() as any;
+          if (context?.enterpriseId && data?.enterpriseId && data.enterpriseId !== context.enterpriseId) {
+            throw new Error(`tenant_mismatch:${normalized[idx].productId}`);
+          }
+          const currentStock = typeof data?.stock === 'number' ? data.stock : 0;
+          const nextStock = currentStock - normalized[idx].quantity;
+          if (nextStock < minStock) {
+            throw new Error(`insufficient_stock:${normalized[idx].productId}`);
+          }
+        });
+
+        refs.forEach((ref, idx) => {
+          const data = snaps[idx].data() as any;
+          const currentStock = typeof data?.stock === 'number' ? data.stock : 0;
+          const nextStock = currentStock - normalized[idx].quantity;
+          tx.update(ref, { stock: nextStock, updatedAt: Date.now() });
+        });
+      });
+    } catch (e: any) {
+      if (e?.code === 'permission-denied') {
+        handleFirestoreError(e, 'update', 'products/*');
+      }
+      throw e;
+    }
+  },
+
+  openTableWithOrderAtomic: async (tableId: string, order: Order) => {
+    assertTenantContext('orders', order);
+    assertTenantContext('tables', { enterpriseId: order.enterpriseId, shopId: order.shopId });
+    try {
+      await runTransaction(db, async (tx) => {
+        const tableRef = doc(db, 'tables', tableId);
+        const orderRef = doc(db, 'orders', order.id);
+        const tableSnap = await tx.get(tableRef);
+
+        if (!tableSnap.exists()) throw new Error(`table_not_found:${tableId}`);
+        const tableData = tableSnap.data() as any;
+        if (tableData?.enterpriseId && tableData.enterpriseId !== order.enterpriseId) {
+          throw new Error(`tenant_mismatch:${tableId}`);
+        }
+        const status = tableData?.status;
+        const currentOrderId = tableData?.currentOrderId;
+        if (status !== 'free' && status !== 'reserved' && currentOrderId !== order.id) {
+          throw new Error(`table_unavailable:${tableId}`);
+        }
+
+        tx.set(orderRef, withTenantMetadata('orders', order), { merge: true });
+        tx.update(tableRef, {
+          status: 'occupied',
+          currentOrderId: order.id,
+          updatedAt: Date.now(),
+        });
+      });
+    } catch (e: any) {
+      if (e?.code === 'permission-denied') {
+        handleFirestoreError(e, 'update', `tables/${tableId}`);
+      }
+      throw e;
+    }
+  },
+
+  upsertOrderForTableAtomic: async (order: Order) => {
+    assertTenantContext('orders', order);
+    try {
+      await runTransaction(db, async (tx) => {
+        const orderRef = doc(db, 'orders', order.id);
+        const orderPayload = withTenantMetadata('orders', order);
+        const isTakeaway = order.tableId === 'takeaway';
+        if (isTakeaway) {
+          tx.set(orderRef, orderPayload, { merge: true });
+          return;
+        }
+
+        const tableRef = doc(db, 'tables', order.tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists()) throw new Error(`table_not_found:${order.tableId}`);
+        const tableData = tableSnap.data() as any;
+        if (tableData?.enterpriseId && tableData.enterpriseId !== order.enterpriseId) {
+          throw new Error(`tenant_mismatch:${order.tableId}`);
+        }
+        const lockedBy = tableData?.currentOrderId;
+        if (lockedBy && lockedBy !== order.id) {
+          throw new Error(`table_lock_mismatch:${order.tableId}`);
+        }
+
+        tx.set(orderRef, orderPayload, { merge: true });
+        tx.update(tableRef, {
+          status: 'occupied',
+          currentOrderId: order.id,
+          updatedAt: Date.now(),
+        });
+      });
+    } catch (e: any) {
+      if (e?.code === 'permission-denied') {
+        handleFirestoreError(e, 'update', `orders/${order.id}`);
+      }
+      throw e;
+    }
+  },
+
+  completeOrderAndReleaseTableAtomic: async (
+    orderId: string,
+    orderUpdates: Partial<Order>,
+    expectedTableId?: string,
+  ) => {
+    try {
+      await runTransaction(db, async (tx) => {
+        const orderRef = doc(db, 'orders', orderId);
+        const orderSnap = await tx.get(orderRef);
+        if (!orderSnap.exists()) throw new Error(`order_not_found:${orderId}`);
+        const currentOrder = orderSnap.data() as Order;
+        const mergedOrder = withTenantMetadata('orders', { ...currentOrder, ...orderUpdates });
+        tx.update(orderRef, mergedOrder);
+
+        const tableId = expectedTableId || currentOrder.tableId;
+        if (!tableId || tableId === 'takeaway') return;
+
+        const tableRef = doc(db, 'tables', tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists()) return;
+        const tableData = tableSnap.data() as any;
+        const lockedBy = tableData?.currentOrderId;
+        if (lockedBy && lockedBy !== orderId) {
+          throw new Error(`table_lock_mismatch:${tableId}`);
+        }
+
+        tx.update(tableRef, {
+          status: 'free',
+          currentOrderId: null,
+          updatedAt: Date.now(),
+        });
+      });
+    } catch (e: any) {
+      if (e?.code === 'permission-denied') {
+        handleFirestoreError(e, 'update', `orders/${orderId}`);
+      }
+      throw e;
+    }
+  },
+
+  setTableReadyFlagAtomic: async (tableId: string, orderId: string, hasReadyItems: boolean) => {
+    try {
+      await runTransaction(db, async (tx) => {
+        const tableRef = doc(db, 'tables', tableId);
+        const tableSnap = await tx.get(tableRef);
+        if (!tableSnap.exists()) return;
+        const tableData = tableSnap.data() as any;
+        const lockedBy = tableData?.currentOrderId;
+        if (lockedBy && lockedBy !== orderId) {
+          throw new Error(`table_lock_mismatch:${tableId}`);
+        }
+        tx.update(tableRef, { hasReadyItems, updatedAt: Date.now() });
+      });
+    } catch (e: any) {
+      if (e?.code === 'permission-denied') {
+        handleFirestoreError(e, 'update', `tables/${tableId}`);
+      }
+      throw e;
+    }
+  },
+
   // Specific Actions
   placeOrder: async (order: Order) => {
     const { id, ...data } = order;

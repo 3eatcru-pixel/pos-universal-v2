@@ -93,10 +93,12 @@ export const MarketInventory: React.FC = () => {
     const qty = parseFloat(countQuantity);
     if (isNaN(qty)) return;
 
-    const newStock = adjustType === 'set' ? qty : (scannedProduct.stock || 0) + qty;
-
     try {
-      await firebaseService.saveItem('products', scannedProduct.id, { ...scannedProduct, stock: newStock });
+      if (adjustType === 'set') {
+        await firebaseService.saveItem('products', scannedProduct.id, { ...scannedProduct, stock: qty });
+      } else {
+        await firebaseService.adjustProductStockAtomic(scannedProduct.id, qty, { enterpriseId: companyId, minStock: 0 });
+      }
       setShowCountModal(false);
       setScannedProduct(null);
       loadProducts();

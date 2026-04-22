@@ -23,9 +23,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
-import { Transaction } from '../../types';
+import { Transaction, RolePermissions } from '../../types';
 import { firebaseService } from '../../services/firebaseService';
 import { accountService } from '../services/accountService';
+import { MOCK_PERMISSIONS } from '../../mockData';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -35,6 +36,7 @@ interface FinanceManagementViewProps {
 
 export const FinanceManagementView: React.FC<FinanceManagementViewProps> = ({ module }) => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [roles, setRoles] = useState<RolePermissions[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -42,6 +44,11 @@ export const FinanceManagementView: React.FC<FinanceManagementViewProps> = ({ mo
 
   const currentUser = accountService.getCurrentUser();
   const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
+  const currentRolePermissions =
+    roles.find(r => r.role === currentUser?.role) ||
+    MOCK_PERMISSIONS.find(r => r.role === currentUser?.role) ||
+    null;
+  const canManageFinance = currentUser?.role === 'dev' || !!currentRolePermissions?.actions.canViewSales;
 
   useEffect(() => {
     loadTransactions();
@@ -50,8 +57,12 @@ export const FinanceManagementView: React.FC<FinanceManagementViewProps> = ({ mo
   const loadTransactions = async () => {
     setLoading(true);
     try {
-      const data = await firebaseService.getAllDocs('transactions', companyId);
+      const [data, roleData] = await Promise.all([
+        firebaseService.getAllDocs('transactions', companyId),
+        firebaseService.getAllDocs('rolePermissions', companyId)
+      ]);
       setTransactions((data as Transaction[]).sort((a, b) => b.timestamp - a.timestamp));
+      setRoles(roleData as unknown as RolePermissions[]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -61,6 +72,10 @@ export const FinanceManagementView: React.FC<FinanceManagementViewProps> = ({ mo
 
   const handleAddTransaction = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canManageFinance) {
+      alert('Sem permissão para lançar transações financeiras.');
+      return;
+    }
     const formData = new FormData(e.currentTarget);
     const id = `trans-${Math.random().toString(36).substr(2, 9)}`;
     const newTransaction: Transaction = {
