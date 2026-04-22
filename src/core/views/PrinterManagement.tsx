@@ -22,6 +22,8 @@ import { firebaseService } from '../../services/firebaseService';
 import { accountService } from '../services/accountService';
 import { cn } from '../../lib/utils';
 import { MOCK_PERMISSIONS } from '../../mockData';
+import { printerManager } from '../../modules/printer/printerManager';
+import { PrinterScanProgress } from '../../modules/printer/printerTypes';
 
 export const PrinterManagement: React.FC = () => {
   const [printers, setPrinters] = useState<Printer[]>([]);
@@ -29,6 +31,8 @@ export const PrinterManagement: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [autoDetecting, setAutoDetecting] = useState(false);
+  const [autoMessage, setAutoMessage] = useState<string>('');
   
   const currentUser = accountService.getCurrentUser();
   const companyId = currentUser?.companyId || localStorage.getItem('rm_enterprise_id') || '';
@@ -50,6 +54,13 @@ export const PrinterManagement: React.FC = () => {
   useEffect(() => {
     loadPrinters();
   }, [companyId]);
+
+  useEffect(() => {
+    const off = printerManager.onProgress((p: PrinterScanProgress) => {
+      setAutoMessage(p.message);
+    });
+    return off;
+  }, []);
 
   const loadPrinters = async () => {
     setLoading(true);
@@ -123,6 +134,53 @@ export const PrinterManagement: React.FC = () => {
     }
   };
 
+  const handleAutoDetectPrinter = async () => {
+    if (!canManagePrinters) {
+      alert('Sem permissão para configurar impressoras.');
+      return;
+    }
+
+    setAutoDetecting(true);
+    setAutoMessage('🔍 Procurando impressoras...');
+    try {
+      const result = await printerManager.autoConfigure();
+      if (!result.ok || !result.printer) {
+        setAutoMessage('Nenhuma impressora encontrada. Você pode tentar novamente ou configurar manualmente.');
+        return;
+      }
+
+      const saved = result.printer;
+      const id = `ptr-${Math.random().toString(36).substr(2, 9)}`;
+
+      const printerData: Printer = {
+        id,
+        enterpriseId: companyId,
+        shopId: 'main-shop',
+        name: saved.name,
+        type: 'receipt',
+        ipAddress: saved.type === 'network' ? saved.address : undefined,
+        port: saved.port || 9100,
+        connectionType: saved.type === 'bluetooth' ? 'bluetooth' : 'network',
+        status: 'online',
+        isDefault: true,
+      };
+
+      const sameTypeDefaults = printers.filter(p => p.type === printerData.type && p.isDefault);
+      for (const p of sameTypeDefaults) {
+        await firebaseService.saveItem('printers', p.id, { ...p, isDefault: false });
+      }
+
+      await firebaseService.saveItem('printers', id, printerData);
+      setAutoMessage('✅ Impressora encontrada! 🖨️ Teste realizado com sucesso');
+      await loadPrinters();
+    } catch (error) {
+      console.error('Auto detect printer failed:', error);
+      setAutoMessage('Falha na configuração automática. Tente novamente ou use o modo manual.');
+    } finally {
+      setAutoDetecting(false);
+    }
+  };
+
   const toggleDefault = async (printer: Printer) => {
     if (!canManagePrinters) {
       alert('Sem permissão para alterar impressora padrão.');
@@ -153,13 +211,23 @@ export const PrinterManagement: React.FC = () => {
         <div>
           <h2 className="text-3xl font-black text-slate-800 tracking-tight uppercase">Gerenciamento de Impressoras</h2>
           <p className="text-slate-500 font-medium font-sans">Configure seus pontos de impressão na rede local.</p>
+          {autoMessage && <p className="text-xs font-bold text-slate-500 mt-2">{autoMessage}</p>}
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-3 hover:bg-blue-600 transition-all shadow-xl shadow-slate-900/10 active:scale-95 shrink-0"
-        >
-          <Plus className="w-5 h-5" /> Adicionar Impressora
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleAutoDetectPrinter}
+            disabled={autoDetecting}
+            className="bg-emerald-600 text-white px-6 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-500/20 active:scale-95 shrink-0 disabled:opacity-60"
+          >
+            <RefreshCw className={`w-4 h-4 ${autoDetecting ? 'animate-spin' : ''}`} /> PROCURAR IMPRESSORA AUTOMATICAMENTE
+          </button>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-3 hover:bg-blue-600 transition-all shadow-xl shadow-slate-900/10 active:scale-95 shrink-0"
+          >
+            <Plus className="w-5 h-5" /> Adicionar Impressora
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

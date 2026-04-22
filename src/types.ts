@@ -144,7 +144,7 @@ export interface Printer {
   type: PrinterType;
   ipAddress?: string; // For network printers
   port?: number;
-  connectionType: 'network' | 'usb' | 'system_default';
+  connectionType: 'network' | 'usb' | 'bluetooth' | 'system_default';
   status: 'online' | 'offline' | 'error';
   isDefault: boolean;
 }
