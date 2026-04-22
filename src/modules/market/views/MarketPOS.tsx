@@ -24,7 +24,7 @@ import {
   Smartphone,
   Package
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { BarcodeScanner } from '../components/BarcodeScanner';
 import { Product, Transaction } from '../../../types';

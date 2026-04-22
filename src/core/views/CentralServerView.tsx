@@ -19,7 +19,7 @@ import {
   Download,
   History
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { meshNetwork } from '../../services/p2pSync';
 import { serverEngine } from '../../services/serverEngine';
 import { cn } from '../../lib/utils';

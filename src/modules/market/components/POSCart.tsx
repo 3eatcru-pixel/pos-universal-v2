@@ -1,6 +1,6 @@
 import React from 'react';
 import { Trash2, Plus, Minus, CreditCard, Banknote, ShoppingCart } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 
 interface CartItem {

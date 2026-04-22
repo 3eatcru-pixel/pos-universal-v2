@@ -28,7 +28,7 @@ import {
   Calendar,
   MapPin
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
 import { Staff, PerformanceEvent, RolePermissions, View } from '../../types';
 import { firebaseService } from '../../services/firebaseService';

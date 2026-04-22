@@ -17,7 +17,7 @@ import {
   List,
   X
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 
 interface CartItem {

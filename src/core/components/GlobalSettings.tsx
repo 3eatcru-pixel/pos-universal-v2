@@ -13,7 +13,7 @@ import {
   Globe,
   Database
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { accountService } from '../services/accountService';
 import { cn } from '../../lib/utils';
 

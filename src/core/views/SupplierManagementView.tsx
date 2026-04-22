@@ -25,7 +25,7 @@ import {
   Clock,
   ArrowUpRight
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
 import { Supplier, SupplierContract } from '../../types';
 import { firebaseService } from '../../services/firebaseService';

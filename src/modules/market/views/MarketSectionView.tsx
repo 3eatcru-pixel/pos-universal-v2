@@ -17,7 +17,7 @@ import {
   Users,
   Award
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../../lib/utils';
 import { Staff } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';

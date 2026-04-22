@@ -16,7 +16,7 @@ import {
   Gift,
   Tag
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { RetailCustomer } from '../services/retailService';
 

@@ -11,7 +11,7 @@ import {
   Clock,
   ArrowDownRight
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { formatCurrency } from '../../../lib/utils';
 
 export const RetailDashboard: React.FC = () => {

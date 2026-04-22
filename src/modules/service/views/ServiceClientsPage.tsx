@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { UserCircle, Plus, Phone, Mail, X } from 'lucide-react';
 import { clientService } from '../services/clientService';
 import { accountService } from '../../../core/services/accountService';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export const ServiceClientsPage: React.FC = () => {
    const enterpriseId = accountService.getCurrentCompanyId() || '';

@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { dbLocal } from './db';
 import { DeviceRole, DeviceMode, SyncEvent, SyncMode } from '../core/types';
+import { MeshSyncEngine, PacketDedupCache } from '../engine/mesh';
 
 /**
  * PeerDiscovery & Mesh Sync Manager
@@ -12,10 +13,13 @@ class MeshNetwork {
   private role: DeviceRole = (localStorage.getItem('pos_device_role') as DeviceRole) || 'client';
   private syncMode: SyncMode = (localStorage.getItem('pos_sync_mode') as SyncMode) || 'p2p';
   private deviceId: string = Math.random().toString(36).substring(7);
-  private onSyncCallback: ((data: SyncEvent) => void) | null = null;
+  private syncListeners = new Set<(data: SyncEvent) => void>();
   private isFallbackMode: boolean = false;
+  private dedup = new PacketDedupCache(3000, 15000);
+  private meshEngine: MeshSyncEngine;
 
   constructor() {
+    this.meshEngine = new MeshSyncEngine(this.deviceId);
     this.init();
   }
 
@@ -55,6 +59,12 @@ class MeshNetwork {
     });
 
     this.socket.on('connect', () => {
+      const user = localStorage.getItem('pos_current_user')
+        ? JSON.parse(localStorage.getItem('pos_current_user')!)
+        : null;
+      if (user?.companyId) {
+        this.socket?.emit('mesh:join', { companyId: user.companyId, deviceId: this.deviceId });
+      }
       if (this.isFallbackMode) {
         console.log('[MeshNetwork] Server Reconnected. RESYNCING dataset...');
         this.isFallbackMode = false;
@@ -63,6 +73,12 @@ class MeshNetwork {
     });
 
     this.socket.on('mesh:sync', (data: SyncEvent) => {
+      if (this.dedup.has(data.id)) return;
+      this.dedup.add(data.id);
+      this.meshEngine.registerIncoming({
+        ...data,
+      });
+
       const user = localStorage.getItem('pos_current_user') 
         ? JSON.parse(localStorage.getItem('pos_current_user')!)
         : null;
@@ -71,7 +87,7 @@ class MeshNetwork {
       const userRole = user?.role || 'operator';
       
       if (userRole === 'dev' || data.companyId === companyId) {
-        if (this.onSyncCallback) this.onSyncCallback(data);
+        this.notifySync(data);
       }
     });
   }
@@ -97,6 +113,9 @@ class MeshNetwork {
       companyId,
       timestamp: Date.now()
     };
+    this.meshEngine.registerOutgoing({
+      ...event,
+    });
 
     if (this.socket?.connected) {
       // If SERVER MODE: Clients send to server for broadcast
@@ -115,7 +134,22 @@ class MeshNetwork {
   }
 
   public setOnSync(callback: (data: SyncEvent) => void) {
-    this.onSyncCallback = callback;
+    this.syncListeners.add(callback);
+    return () => this.syncListeners.delete(callback);
+  }
+
+  public removeOnSync(callback: (data: SyncEvent) => void) {
+    this.syncListeners.delete(callback);
+  }
+
+  private notifySync(data: SyncEvent) {
+    this.syncListeners.forEach((listener) => {
+      try {
+        listener(data);
+      } catch (err) {
+        console.error('[MeshNetwork] Sync listener error:', err);
+      }
+    });
   }
 
   public get isConnectedToLocalMesh() {

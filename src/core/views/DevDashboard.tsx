@@ -19,7 +19,7 @@ import {
   Phone,
   Briefcase
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { accountService } from '../services/accountService';
 import { formatCurrency } from '../../lib/utils';
 import { BusinessMode, Company } from '../types';

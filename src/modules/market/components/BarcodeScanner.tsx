@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { Camera, Scan, X, Monitor, Zap } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner';
 import { cn } from '../../../lib/utils';
 

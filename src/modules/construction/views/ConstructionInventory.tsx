@@ -17,7 +17,7 @@ import {
   Info,
   Printer
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { ConstructionMaterial, MaterialCategory, constructionService, CustomFieldDefinition } from '../services/constructionService';
 

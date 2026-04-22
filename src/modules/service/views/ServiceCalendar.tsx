@@ -18,7 +18,7 @@ import {
   Monitor,
   DollarSign
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { accountService } from '../../../core/services/accountService';
 import { schedulingService } from '../services/schedulingService';

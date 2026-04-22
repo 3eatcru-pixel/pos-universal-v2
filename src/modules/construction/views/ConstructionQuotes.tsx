@@ -19,7 +19,7 @@ import {
   Package,
   Printer
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { Quote, constructionService, Customer, ConstructionMaterial } from '../services/constructionService';
 

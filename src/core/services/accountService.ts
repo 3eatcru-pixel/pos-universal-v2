@@ -5,6 +5,10 @@ import { meshNetwork } from '../../services/p2pSync';
 class AccountService {
   private companies: Company[] = JSON.parse(localStorage.getItem('pos_companies') || '[]');
   private currentUser: User | null = JSON.parse(localStorage.getItem('pos_current_user') || 'null');
+  private devAllowlist = (import.meta.env.VITE_DEV_ALLOWLIST || '')
+    .split(',')
+    .map((e: string) => e.trim().toLowerCase())
+    .filter(Boolean);
 
   // Multi-company Isolation: The "Gold standard" for this POS
   public getCurrentCompanyId(): string | null {
@@ -63,13 +67,14 @@ class AccountService {
   }
 
   public async loginAsDev(email: string): Promise<boolean> {
-    // Basic dev check
-    if (email.endsWith('@dev.com') || email === 'admin@pos.com') {
+    // Hardened: allow only explicit allowlist configured by environment.
+    const normalized = (email || '').trim().toLowerCase();
+    if (normalized && this.devAllowlist.includes(normalized)) {
       const user: User = {
         id: 'dev-master',
         name: 'Developer Global',
         role: 'dev',
-        email,
+        email: normalized,
         companyId: 'global'
       };
       this.setCurrentUser(user);
@@ -79,15 +84,8 @@ class AccountService {
   }
 
   public async loginAsMasterDev(): Promise<boolean> {
-    const user: User = {
-      id: 'dev-master-bypass',
-      name: 'System Architect',
-      role: 'dev',
-      email: 'architect@core.sys',
-      companyId: 'global'
-    };
-    this.setCurrentUser(user);
-    return true;
+    // Backdoor removed.
+    return false;
   }
 
   public async loginAsServer(accessCode: string): Promise<boolean> {
@@ -97,7 +95,7 @@ class AccountService {
     const user: User = {
       id: `srv-${company.id}`,
       name: 'Central Processing Node',
-      role: 'dev', // High privileges for the headless server
+      role: 'manager',
       companyId: company.id
     };
 
@@ -208,9 +206,9 @@ class AccountService {
     this.createDevNotification(companyId, 'Acesso Presencial Remoto', 'Um desenvolvedor acessou sua conta para verificações técnicas.');
     
     const user: User = {
-      id: `dev-access-${company.id}`,
-      name: `Dev (${company.ownerName})`,
-      role: 'dev', // Keep as dev but scoped to company
+      id: `support-${company.id}`,
+      name: `Support (${company.ownerName})`,
+      role: 'manager',
       email: company.ownerEmail,
       companyId: company.id
     };
@@ -246,22 +244,21 @@ class AccountService {
     const user = this.getCurrentUser();
     if (!user || (user.role !== 'owner' && user.role !== 'manager' && user.role !== 'dev')) return false;
 
-    // Em um sistema real, o PIN seria validado no Firebase/Server
-    if (pin !== '1234') return false; 
-
     const company = this.companies.find(c => c.id === companyId);
-    if (company) {
-      company.isPaused = !company.isPaused;
-      this.saveCompanies();
-      
-      // Notificar rede
-      meshNetwork.broadcast('system:pause_state', { 
-        companyId, 
-        isPaused: company.isPaused 
-      });
-      return true;
-    }
-    return false;
+    if (!company) return false;
+
+    // Transitional policy: admin action PIN must match company access code.
+    if ((pin || '').trim() !== company.accessCode) return false;
+
+    company.isPaused = !company.isPaused;
+    this.saveCompanies();
+    
+    // Notificar rede
+    meshNetwork.broadcast('system:pause_state', { 
+      companyId, 
+      isPaused: company.isPaused 
+    });
+    return true;
   }
 
   public async logoutCompany() {

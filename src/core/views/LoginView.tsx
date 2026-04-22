@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Building2, 
   Users, 
@@ -17,6 +17,8 @@ import { accountService } from '../services/accountService';
 import { BusinessMode } from '../types';
 
 export const LoginView: React.FC = () => {
+  const enableDevOverride = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_OVERRIDE === 'true';
+  const devOverrideCode = import.meta.env.VITE_DEV_OVERRIDE_CODE || '';
   const [tab, setTab] = useState<'employee' | 'dev' | 'server'>('employee');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +34,7 @@ export const LoginView: React.FC = () => {
   const [secretCode, setSecretCode] = useState('');
 
   const handleSecretClick = () => {
+    if (!enableDevOverride) return;
     const newCount = secretClicks + 1;
     if (newCount >= 7) {
       setShowSecretLogin(true);
@@ -43,10 +46,20 @@ export const LoginView: React.FC = () => {
 
   const handleSecretLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (secretCode === 'code-22') {
+    if (!enableDevOverride) {
+      setError('Modo de override desabilitado neste ambiente.');
+      setSecretCode('');
+      return;
+    }
+    if (devOverrideCode && secretCode === devOverrideCode) {
       setLoading(true);
-      await accountService.loginAsMasterDev();
-      window.location.reload();
+      const success = await accountService.loginAsMasterDev();
+      if (success) {
+        window.location.reload();
+      } else {
+        setError('Override de desenvolvimento indisponível.');
+        setLoading(false);
+      }
     } else {
       setError('Código de acesso mestre incorreto.');
       setSecretCode('');
@@ -221,7 +234,7 @@ export const LoginView: React.FC = () => {
                 <h1 className="text-3xl font-black text-slate-800 mb-2">Painel Developer</h1>
                 <p className="text-slate-500 mb-10 font-medium">Acesso restrito para monitoramento global e suporte técnico.</p>
                 
-                {!showSecretLogin ? (
+                {(!showSecretLogin || !enableDevOverride) ? (
                   <form onSubmit={handleDevLogin} className="space-y-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-4">Email do Desenvolvedor</label>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout, Utensils, Building2, ShieldCheck, ChevronRight, ShoppingBag, ShoppingCart, Briefcase } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { BusinessMode } from '../types';
 
 interface ModeSelectorProps {

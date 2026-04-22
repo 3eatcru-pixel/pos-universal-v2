@@ -14,7 +14,7 @@ import { serverEngine } from './services/serverEngine';
 import { GlobalSettings } from './core/components/GlobalSettings';
 import { ServiceLayout } from './modules/service/views/ServiceLayout';
 import { ShieldAlert, Lock, Settings, LayoutGrid } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // We'll import the legacy App (Restaurant) for now to keep functionality
 import LegacyApp from './App';

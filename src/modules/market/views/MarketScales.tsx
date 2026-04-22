@@ -10,7 +10,7 @@ import {
   CheckCircle2,
   Cpu
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { cn } from '../../../lib/utils';
 
 export const MarketScales: React.FC = () => {

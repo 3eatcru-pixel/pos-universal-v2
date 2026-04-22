@@ -80,7 +80,7 @@ import {
   Truck,
   Briefcase
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   AreaChart, 
   Area, 
@@ -148,6 +148,7 @@ import { meshNetwork } from './services/p2pSync';
 import { dbLocal } from './services/db';
 
 export default function App() {
+  const devPanelEnabled = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_PANEL === 'true';
   const [enterpriseId, setEnterpriseId] = useState<string | null>(() => {
     return localStorage.getItem('rm_enterprise_id');
   });
@@ -4962,7 +4963,7 @@ Obrigado pela preferência!
   const renderCompanyLogin = () => {
     return (
       <div className="fixed inset-0 bg-slate-900 flex items-center justify-center z-[110] p-4 font-sans">
-        {isDevMode && renderDeveloperPanel()}
+        {devPanelEnabled && isDevMode && renderDeveloperPanel()}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -4970,6 +4971,7 @@ Obrigado pela preferência!
         >
           <div 
             onClick={() => {
+              if (!devPanelEnabled) return;
               const newClicks = devClicks + 1;
               setDevClicks(newClicks);
               if (newClicks >= 7) {

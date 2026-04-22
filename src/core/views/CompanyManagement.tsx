@@ -12,7 +12,7 @@ import {
   Zap,
   RefreshCw
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { accountService } from '../services/accountService';
 import { meshNetwork } from '../../services/p2pSync';
 import { cn } from '../../lib/utils';

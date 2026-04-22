@@ -19,7 +19,7 @@ import {
   Layers,
   MapPin
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../../../lib/utils';
 import { ServiceItem, Staff, ServiceResource } from '../../../types';
 import { firebaseService } from '../../../services/firebaseService';

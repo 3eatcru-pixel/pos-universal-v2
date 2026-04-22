@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Armchair, Plus, Check, X } from 'lucide-react';
 import { serviceManagementService } from '../services/serviceManagementService';
 import { accountService } from '../../../core/services/accountService';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../../lib/utils';
 
 export const ServiceResourcesPage: React.FC = () => {

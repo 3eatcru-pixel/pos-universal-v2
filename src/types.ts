@@ -91,7 +91,8 @@ export interface InviteCode {
 export interface Enterprise {
   id: string; // cmp_xxx
   name: string;
-  ownerId: string; // usr_xxx
+  ownerId?: string; // usr_xxx
+  owners?: string[]; // legacy compatibility
   regions: Region[];
 }
 
@@ -106,7 +107,8 @@ export interface Region {
 export interface Shop {
   id: string; // str_xxx
   name: string;
-  companyId: string; // Renamed from enterpriseId
+  companyId?: string; // canonical (new)
+  enterpriseId?: string; // legacy compatibility
   regionId: string;
   address?: string;
   cnpj?: string;
@@ -265,8 +267,10 @@ export type OrderStatus = 'pending' | 'preparing' | 'ready' | 'delivered' | 'can
 
 export interface Staff {
   id: string; // emp_xxx
-  companyId: string; // Renamed from enterpriseId
-  storeId?: string; // Optional if not assigned to specific store
+  companyId?: string; // canonical (new)
+  enterpriseId?: string; // legacy compatibility
+  storeId?: string; // canonical (new)
+  shopId?: string; // legacy compatibility
   name: string;
   role: UserRole;
   active: boolean;
