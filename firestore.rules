@@ -5,8 +5,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function authCompanyId() {
-      return request.auth.token.companyId;
+    function authTenantId() {
+      return request.auth.token.companyId != null
+        ? request.auth.token.companyId
+        : request.auth.token.enterpriseId;
     }
 
     function isAdmin() {
@@ -32,11 +34,11 @@ service cloud.firestore {
       return (
         data.keys().hasAny(['companyId']) &&
         data.companyId is string &&
-        data.companyId == authCompanyId()
+        data.companyId == authTenantId()
       ) || (
         data.keys().hasAny(['enterpriseId']) &&
         data.enterpriseId is string &&
-        data.enterpriseId == authCompanyId()
+        data.enterpriseId == authTenantId()
       );
     }
 
@@ -75,13 +77,15 @@ service cloud.firestore {
     }
 
     match /enterprises/{entId} {
-      allow read: if isAdmin() || (isSignedIn() && authCompanyId() == entId);
-      allow create, update, delete: if isAdmin() || (isSignedIn() && authCompanyId() == entId);
+      allow read: if isAdmin() || (isSignedIn() && authTenantId() == entId);
+      allow create, update, delete: if isAdmin() || (isSignedIn() && authTenantId() == entId);
     }
 
     match /rolePermissions/{roleId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isAdmin() && isValidId(roleId);
+      allow read: if isValidId(roleId) && canReadDoc();
+      allow create: if isValidId(roleId) && canCreateDoc();
+      allow update: if isValidId(roleId) && canUpdateDoc();
+      allow delete: if isValidId(roleId) && canDeleteDoc();
     }
 
     match /shops/{docId} {
@@ -176,6 +180,62 @@ service cloud.firestore {
     }
 
     match /recountRequests/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /businessConfigs/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /staffSchedules/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /transactions/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /performance_events/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /suppliers/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /supplier_contracts/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /services/{docId} {
+      allow read: if isValidId(docId) && canReadDoc();
+      allow create: if isValidId(docId) && canCreateDoc();
+      allow update: if isValidId(docId) && canUpdateDoc();
+      allow delete: if isValidId(docId) && canDeleteDoc();
+    }
+
+    match /resources/{docId} {
       allow read: if isValidId(docId) && canReadDoc();
       allow create: if isValidId(docId) && canCreateDoc();
       allow update: if isValidId(docId) && canUpdateDoc();

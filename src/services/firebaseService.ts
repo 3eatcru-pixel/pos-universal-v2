@@ -70,6 +70,79 @@ const handleFirestoreError = (error: any, operationType: FirestoreErrorInfo['ope
   throw error;
 };
 
+const GLOBAL_COLLECTIONS = new Set(['masterKeys', 'enterprises']);
+const TENANT_SCOPED_COLLECTIONS = new Set([
+  'shops',
+  'staff',
+  'products',
+  'orders',
+  'tables',
+  'inventory',
+  'backups',
+  'settings',
+  'shifts',
+  'reservations',
+  'printers',
+  'incidentReports',
+  'notifications',
+  'recountRequests',
+  'businessConfigs',
+  'staffSchedules',
+  'rolePermissions',
+  'transactions',
+  'performance_events',
+  'suppliers',
+  'supplier_contracts',
+  'services',
+  'resources',
+]);
+
+function getLocalTenantId(): string | null {
+  try {
+    const user = localStorage.getItem('pos_current_user')
+      ? JSON.parse(localStorage.getItem('pos_current_user')!)
+      : null;
+    return user?.companyId || localStorage.getItem('rm_enterprise_id') || null;
+  } catch {
+    return localStorage.getItem('rm_enterprise_id') || null;
+  }
+}
+
+function resolveTenantId(data?: any): string | null {
+  return data?.companyId || data?.enterpriseId || getLocalTenantId();
+}
+
+function withTenantMetadata(colName: string, data: any): any {
+  if (!TENANT_SCOPED_COLLECTIONS.has(colName)) return data;
+  const tenantId = resolveTenantId(data);
+  if (!tenantId) return data;
+  return {
+    ...data,
+    companyId: data?.companyId || tenantId,
+    enterpriseId: data?.enterpriseId || tenantId,
+  };
+}
+
+function assertTenantContext(colName: string, data?: any): void {
+  if (!TENANT_SCOPED_COLLECTIONS.has(colName)) return;
+  const tenantId = resolveTenantId(data);
+  if (!tenantId) {
+    throw new Error(`Tenant ausente para coleção sensível: ${colName}`);
+  }
+}
+
+function getRolePermissionDocId(role: string, tenantId: string | null): string {
+  if (!tenantId) return role;
+  return `rp_${tenantId}_${role}`;
+}
+
+function normalizeRolePermissionDocId(id: string, data?: any): string {
+  if (id.startsWith('rp_')) return id;
+  const role = data?.role || id;
+  const tenantId = resolveTenantId(data);
+  return getRolePermissionDocId(role, tenantId);
+}
+
 export const firebaseService = {
   // ... existing methods ...
   saveSecureBackup: async (enterpriseId: string, data: any, key: string) => {
@@ -77,6 +150,7 @@ export const firebaseService = {
     const backupId = `backup-${Date.now()}`;
     try {
       await setDoc(doc(db, 'backups', backupId), {
+        companyId: enterpriseId,
         enterpriseId,
         timestamp: Date.now(),
         chunks,
@@ -103,12 +177,16 @@ export const firebaseService = {
   },
   // Generic collection listener scoped by enterprise and optionally shop
   subscribeCollection: (colName: string, enterpriseId: string | null, shopId: string | null, callback: (data: any[]) => void) => {
+    if (TENANT_SCOPED_COLLECTIONS.has(colName) && !enterpriseId) {
+      callback([]);
+      return () => {};
+    }
+
     let q = query(collection(db, colName));
     
     const conditions = [];
-    const globalCollections = ['masterKeys', 'enterprises'];
     
-    if (enterpriseId && !globalCollections.includes(colName)) {
+    if (enterpriseId && !GLOBAL_COLLECTIONS.has(colName)) {
       conditions.push(where('enterpriseId', '==', enterpriseId));
     }
     if (shopId && colName !== 'shops' && colName !== 'staff') {
@@ -143,7 +221,12 @@ export const firebaseService = {
   // Save/Update Helpers
   saveItem: async (colName: string, id: string, data: any) => {
     try {
-      await setDoc(doc(db, colName, id), data, { merge: true });
+      assertTenantContext(colName, data);
+      const payload = withTenantMetadata(colName, data);
+      const docId = colName === 'rolePermissions'
+        ? normalizeRolePermissionDocId(id, payload)
+        : id;
+      await setDoc(doc(db, colName, docId), payload, { merge: true });
     } catch (e) {
       handleFirestoreError(e, 'create', `${colName}/${id}`);
     }
@@ -151,7 +234,9 @@ export const firebaseService = {
 
   addItem: async (colName: string, data: any) => {
     try {
-      const docRef = await addDoc(collection(db, colName), data);
+      assertTenantContext(colName, data);
+      const payload = withTenantMetadata(colName, data);
+      const docRef = await addDoc(collection(db, colName), payload);
       return docRef.id;
     } catch (e) {
       return handleFirestoreError(e, 'create', colName);
@@ -160,7 +245,12 @@ export const firebaseService = {
 
   updateItem: async (colName: string, id: string, data: any) => {
     try {
-      await updateDoc(doc(db, colName, id), data);
+      assertTenantContext(colName, data);
+      const payload = withTenantMetadata(colName, data);
+      const docId = colName === 'rolePermissions'
+        ? normalizeRolePermissionDocId(id, payload)
+        : id;
+      await updateDoc(doc(db, colName, docId), payload);
     } catch (e) {
       handleFirestoreError(e, 'update', `${colName}/${id}`);
     }
@@ -168,6 +258,23 @@ export const firebaseService = {
 
   deleteItem: async (colName: string, id: string) => {
     try {
+      assertTenantContext(colName);
+      if (colName === 'rolePermissions' && !id.startsWith('rp_')) {
+        const tenantId = getLocalTenantId();
+        if (tenantId) {
+          const snapshot = await getDocs(
+            query(
+              collection(db, 'rolePermissions'),
+              where('enterpriseId', '==', tenantId),
+              where('role', '==', id),
+            ),
+          );
+          const batch = writeBatch(db);
+          snapshot.docs.forEach((d) => batch.delete(doc(db, 'rolePermissions', d.id)));
+          await batch.commit();
+          return;
+        }
+      }
       await deleteDoc(doc(db, colName, id));
     } catch (e) {
       handleFirestoreError(e, 'delete', `${colName}/${id}`);
@@ -176,11 +283,16 @@ export const firebaseService = {
 
   getAllDocs: async (colName: string, enterpriseId?: string) => {
     try {
+      if (TENANT_SCOPED_COLLECTIONS.has(colName) && !enterpriseId) return [];
       let q = query(collection(db, colName));
       if (enterpriseId) {
         q = query(collection(db, colName), where('enterpriseId', '==', enterpriseId));
       }
       const snapshot = await getDocs(q);
+      if (enterpriseId && snapshot.docs.length === 0) {
+        const fallback = await getDocs(query(collection(db, colName), where('companyId', '==', enterpriseId)));
+        return fallback.docs.map(d => ({ ...d.data(), id: d.id }));
+      }
       return snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
     } catch (e) {
       return handleFirestoreError(e, 'list', colName);
@@ -190,7 +302,7 @@ export const firebaseService = {
   // Specific Actions
   placeOrder: async (order: Order) => {
     const { id, ...data } = order;
-    await setDoc(doc(db, 'orders', id), data);
+    await setDoc(doc(db, 'orders', id), withTenantMetadata('orders', data));
   },
 
   closeOrder: async (orderId: string, payments: any[], paymentMethod: string) => {
@@ -222,22 +334,38 @@ export const firebaseService = {
     staffSchedules?: any[]
   }) => {
     const batch = writeBatch(db);
+    const tenantId =
+      data.shops[0]?.companyId ||
+      data.shops[0]?.enterpriseId ||
+      data.staff[0]?.companyId ||
+      data.staff[0]?.enterpriseId ||
+      getLocalTenantId();
     
-    data.shops.forEach(s => batch.set(doc(db, 'shops', s.id), s));
-    data.staff.forEach(s => batch.set(doc(db, 'staff', s.id), s));
-    data.products.forEach(p => batch.set(doc(db, 'products', p.id), p));
-    data.tables.forEach(t => batch.set(doc(db, 'tables', t.id), t));
+    data.shops.forEach(s => batch.set(doc(db, 'shops', s.id), withTenantMetadata('shops', s)));
+    data.staff.forEach(s => batch.set(doc(db, 'staff', s.id), withTenantMetadata('staff', s)));
+    data.products.forEach(p => batch.set(doc(db, 'products', p.id), withTenantMetadata('products', p)));
+    data.tables.forEach(t => batch.set(doc(db, 'tables', t.id), withTenantMetadata('tables', t)));
     if (data.orders) {
-      data.orders.forEach(o => batch.set(doc(db, 'orders', o.id), o));
+      data.orders.forEach(o => batch.set(doc(db, 'orders', o.id), withTenantMetadata('orders', o)));
     }
-    data.inventory.forEach(i => batch.set(doc(db, 'inventory', i.id), i));
-    data.permissions.forEach(p => batch.set(doc(db, 'rolePermissions', p.role), p));
-    data.printers.forEach(p => batch.set(doc(db, 'printers', p.id), p));
+    data.inventory.forEach(i => batch.set(doc(db, 'inventory', i.id), withTenantMetadata('inventory', i)));
+    data.permissions.forEach(p => {
+      const roleDocId = getRolePermissionDocId(p.role, tenantId);
+      batch.set(
+        doc(db, 'rolePermissions', roleDocId),
+        withTenantMetadata('rolePermissions', {
+          ...p,
+          enterpriseId: p.enterpriseId || tenantId || undefined,
+          companyId: (p as any).companyId || tenantId || undefined,
+        }),
+      );
+    });
+    data.printers.forEach(p => batch.set(doc(db, 'printers', p.id), withTenantMetadata('printers', p)));
     if (data.businessConfigs) {
-      data.businessConfigs.forEach(c => batch.set(doc(db, 'businessConfigs', c.id), c));
+      data.businessConfigs.forEach(c => batch.set(doc(db, 'businessConfigs', c.id), withTenantMetadata('businessConfigs', c)));
     }
     if (data.staffSchedules) {
-      data.staffSchedules.forEach(s => batch.set(doc(db, 'staffSchedules', s.id), s));
+      data.staffSchedules.forEach(s => batch.set(doc(db, 'staffSchedules', s.id), withTenantMetadata('staffSchedules', s)));
     }
 
     await batch.commit();

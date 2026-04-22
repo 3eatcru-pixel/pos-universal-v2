@@ -141,6 +141,7 @@ import { cn, formatCurrency } from './lib/utils';
 import { printerService } from './services/printerService';
 import { firebaseService } from './services/firebaseService';
 import { db } from './firebase';
+import { canAccessTenant, ensureFirebaseSession } from './services/authSession';
 
 // --- State Management ---
 
@@ -192,6 +193,8 @@ export default function App() {
   const [rolePermissions, setRolePermissions] = useState<RolePermissions[]>([]);
   const [businessConfigs, setBusinessConfigs] = useState<BusinessConfig[]>([]);
   const [staffSchedules, setStaffSchedules] = useState<StaffSchedule[]>([]);
+  const [authReady, setAuthReady] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [customizationTab, setCustomizationTab] = useState<'modules' | 'roles' | 'workflows' | 'fields' | 'schedule'>('modules');
   
   const currentBusinessConfig = useMemo(() => businessConfigs.find(c => c.enterpriseId === enterpriseId), [businessConfigs, enterpriseId]);
@@ -208,14 +211,35 @@ export default function App() {
   // If we are in local mode, we use MOCK data and persist changes to local storage.
   // This allows the app to function 'default on device' without any external Keys.
   
+  useEffect(() => {
+    if (isLocalMode) {
+      setAuthReady(true);
+      setAuthError(null);
+      return;
+    }
+    let mounted = true;
+    ensureFirebaseSession()
+      .then(() => {
+        if (!mounted) return;
+        setAuthReady(true);
+        setAuthError(null);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        console.error('Falha ao iniciar sessão Firebase', error);
+        setAuthReady(false);
+        setAuthError('Não foi possível autenticar no Firebase para modo Cloud.');
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [isLocalMode]);
+
   // Sync Logic
   useEffect(() => {
-    // These collections should be subscribed to globally, regardless of enterpriseId
-    const globalUnsubs = [
-      firebaseService.subscribeCollection('masterKeys', null, null, setMasterKeys),
-      firebaseService.subscribeCollection('enterprises', null, null, setEnterprises),
-      firebaseService.subscribeCollection('rolePermissions', null, null, setRolePermissions),
-    ];
+    if (!authReady && !isLocalMode) return;
+
+    const globalUnsubs: Array<() => void> = [];
 
     if (!enterpriseId && !isLocalMode) {
       return () => globalUnsubs.forEach(u => u());
@@ -242,16 +266,26 @@ export default function App() {
       firebaseService.subscribeStaff(enterpriseId, setStaff),
       firebaseService.subscribeCollection('businessConfigs', enterpriseId, null, setBusinessConfigs),
       firebaseService.subscribeCollection('staffSchedules', enterpriseId, null, setStaffSchedules),
+      firebaseService.subscribeCollection('rolePermissions', enterpriseId, null, setRolePermissions),
     ];
     
     return () => {
       globalUnsubs.forEach(u => u());
       unsubs.forEach(u => u());
     };
-  }, [enterpriseId, isLocalMode]);
+  }, [enterpriseId, isLocalMode, authReady]);
 
   useEffect(() => {
-    if (isLocalMode || !selectedShopId || !enterpriseId) return;
+    if (!devPanelEnabled || !isDevMode || isLocalMode || !authReady) return;
+    const unsubs = [
+      firebaseService.subscribeCollection('masterKeys', null, null, setMasterKeys),
+      firebaseService.subscribeCollection('enterprises', null, null, setEnterprises),
+    ];
+    return () => unsubs.forEach(u => u());
+  }, [devPanelEnabled, isDevMode, isLocalMode, authReady]);
+
+  useEffect(() => {
+    if (isLocalMode || !authReady || !selectedShopId || !enterpriseId) return;
     const unsubs = [
       firebaseService.subscribeCollection('tables', enterpriseId, selectedShopId, setTables),
       firebaseService.subscribeCollection('products', enterpriseId, selectedShopId, setProducts),
@@ -264,27 +298,29 @@ export default function App() {
       firebaseService.subscribeCollection('notifications', enterpriseId, selectedShopId, setNotifications),
     ];
     return () => unsubs.forEach(u => u());
-  }, [selectedShopId, enterpriseId, isLocalMode]);
+  }, [selectedShopId, enterpriseId, isLocalMode, authReady]);
 
   // Seeding Logic (Run once if empty)
   useEffect(() => {
-    if (staff.length === 0 && shops.length === 0 && enterprises.length === 0) {
+    const allowAutoSeed = import.meta.env.DEV && import.meta.env.VITE_ENABLE_AUTO_SEED === 'true';
+    if (!allowAutoSeed || isLocalMode || !enterpriseId || !authReady) return;
+    if (staff.length === 0 && shops.length === 0) {
        // Avoid multiple seeds if called in parallel
        console.log("Seeding initial data...");
        firebaseService.seedData({
-         shops: MOCK_SHOPS,
-         staff: MOCK_STAFF,
-         products: MOCK_PRODUCTS,
-         tables: MOCK_TABLES,
-         orders: MOCK_ORDERS,
-         inventory: MOCK_INVENTORY,
+         shops: MOCK_SHOPS.map(s => ({ ...s, id: `${enterpriseId}-${s.id}`, enterpriseId, companyId: enterpriseId })),
+         staff: MOCK_STAFF.map(s => ({ ...s, id: `${enterpriseId}-${s.id}`, enterpriseId, companyId: enterpriseId })),
+         products: MOCK_PRODUCTS.map(p => ({ ...p, id: `${enterpriseId}-${p.id}`, enterpriseId, companyId: enterpriseId })),
+         tables: MOCK_TABLES.map(t => ({ ...t, id: `${enterpriseId}-${t.id}`, enterpriseId, companyId: enterpriseId })),
+         orders: MOCK_ORDERS.map(o => ({ ...o, id: `${enterpriseId}-${o.id}`, enterpriseId, companyId: enterpriseId })),
+         inventory: MOCK_INVENTORY.map(i => ({ ...i, id: `${enterpriseId}-${i.id}`, enterpriseId, companyId: enterpriseId })),
          permissions: MOCK_PERMISSIONS,
-         printers: MOCK_PRINTERS,
-         businessConfigs: MOCK_BUSINESS_CONFIG,
-         staffSchedules: MOCK_SCHEDULES
+         printers: MOCK_PRINTERS.map(p => ({ ...p, id: `${enterpriseId}-${p.id}`, enterpriseId, companyId: enterpriseId })),
+         businessConfigs: MOCK_BUSINESS_CONFIG.map(c => ({ ...c, id: `${enterpriseId}-${c.id}`, enterpriseId, companyId: enterpriseId })),
+         staffSchedules: MOCK_SCHEDULES.map(s => ({ ...s, id: `${enterpriseId}-${s.id}`, enterpriseId, companyId: enterpriseId }))
        });
     }
-  }, [staff, shops, enterprises]);
+  }, [staff, shops, enterpriseId, isLocalMode, authReady]);
 
   useEffect(() => {
     if (enterpriseId) localStorage.setItem('rm_enterprise_id', enterpriseId);
@@ -473,6 +509,13 @@ export default function App() {
     if (!id.trim()) return;
     setIsSeeding(true);
     try {
+      await ensureFirebaseSession();
+      const canAccess = await canAccessTenant(id);
+      if (!canAccess) {
+        alert("Sua sessão atual não possui claim de acesso para esta empresa. Solicite vinculação de tenant (companyId) no token.");
+        setIsSeeding(false);
+        return;
+      }
       const existingShops = await firebaseService.getAllDocs('shops', id);
       if (existingShops.length === 0) {
         if (confirm("Identificador de empresa não encontrado. Gostaria de criar uma conta DEMO com este ID agora?")) {
@@ -2230,6 +2273,11 @@ Obrigado pela preferência!
             </div>
           </div>
 
+          {authError && (
+            <p className="mb-4 text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+              {authError}
+            </p>
+          )}
           <div className="space-y-6">
             {/* Secondary Widgets */}
             <div className="sleek-card p-6 bg-red-50/30 border-red-100/50">
@@ -5003,7 +5051,7 @@ Obrigado pela preferência!
             <div className="grid grid-cols-1 gap-3">
               <button 
                 onClick={() => handleCompanyLogin(companyIdInput)}
-                disabled={isSeeding || !companyIdInput}
+                disabled={isSeeding || !companyIdInput || (!isLocalMode && !authReady)}
                 className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-[11px] hover:bg-emerald-500 hover:shadow-xl hover:shadow-emerald-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isSeeding ? (
@@ -5011,7 +5059,7 @@ Obrigado pela preferência!
                     <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                     Conectando...
                   </>
-                ) : "Sincronizar Cloud"}
+                ) : (!isLocalMode && !authReady) ? "Iniciando SessÃ£o..." : "Sincronizar Cloud"}
               </button>
 
               <div className="flex items-center gap-4 py-2">
